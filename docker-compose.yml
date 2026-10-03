@@ -1,0 +1,33 @@
+# Vein Server Manager: headless install.
+#   1. Copy .env.example to .env and set VSM_ADMIN_PASSWORD.
+#   2. docker compose up -d
+#   3. Open http://<host>:8810
+# The same file works on Linux hosts and on Windows with Docker Desktop (WSL 2).
+
+name: vein-server-manager # fixed, so the data volume keeps its name wherever this file lives
+
+services:
+  vsm:
+    build: .
+    image: vein-server-manager:latest
+    container_name: vein-server-manager
+    platform: linux/amd64 # the Vein server and SteamCMD are x86-64 only
+    restart: unless-stopped
+    stop_grace_period: 3m # lets the game server finish saving before the container stops
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      VSM_AUTO_START: ${VSM_AUTO_START:-true}
+      TZ: ${TZ:-UTC} # scheduled restarts use this timezone
+    ports:
+      # Web UI: keep on your LAN/VPN or behind an HTTPS reverse proxy. VSM_BIND=127.0.0.1 keeps it on this host only.
+      - "${VSM_BIND:-0.0.0.0}:${VSM_WEB_PORT:-8810}:8810/tcp"
+      # Game ports must be the same inside and outside the container.
+      - "${VSM_GAME_PORT:-7777}:${VSM_GAME_PORT:-7777}/udp"
+      - "${VSM_QUERY_PORT:-27015}:${VSM_QUERY_PORT:-27015}/udp"
+    volumes:
+      - vsm-data:/data # or an absolute host path, e.g. /srv/vein:/data  (Windows: C:\VeinServer:/data)
+
+volumes:
+  vsm-data:

@@ -1,0 +1,10 @@
+**
+!pyproject.toml
+!README.md
+!vsm/**
+!web/**
+!docker/**
+vsm/static
+**/__pycache__
+web/node_modules
+web/data

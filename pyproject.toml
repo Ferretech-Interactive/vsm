@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vein-server-manager"
+version = "0.1.0b1"
+description = "Web-based, headless-friendly manager for Vein dedicated servers (Windows, Linux, Docker)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "FerreTech Interactive" }]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "psutil>=5.9",
+    "python-multipart>=0.0.9",
+    "pydantic>=2.6",
+    "truststore>=0.10",
+]
+
+[project.optional-dependencies]
+discord = ["discord.py>=2.4"]
+# Windows desktop window and tray icon (python -m vsm.desktop); paramiko is for deploying to a Linux server over SSH
+desktop = ["pywebview>=6.2", "pystray>=0.19", "pillow>=10", "pywin32>=311; sys_platform == 'win32'", "paramiko>=3.4"]
+
+[project.urls]
+Repository = "https://github.com/Ferretech-Interactive/vsm"
+
+[project.scripts]
+vsm = "vsm.__main__:main"
+
+[tool.pytest.ini_options]
+cache_dir = "build/.pytest_cache"
+
+[tool.setuptools.packages.find]
+include = ["vsm*"]
+
+[tool.setuptools.package-data]
+vsm = ["static/**/*", "desktop/icon.png"]

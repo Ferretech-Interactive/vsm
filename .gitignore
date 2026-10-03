@@ -1,0 +1,38 @@
+# Runtime data (config, secrets, server files, backups)
+/data/
+web/data/
+.env
+
+# Everything the build scripts produce: release files, the packaged app, work folders, test cache
+build/
+
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+dist/
+
+# Written by the installer beside the exe; never part of the source
+desktop.json
+
+# Web UI
+web/node_modules/
+vsm/static/
+
+# Logs and crash dumps
+*.log
+*.dmp
+
+# Signing material must never be committed
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Editors and operating systems
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

@@ -1,0 +1,26 @@
+# systemd unit for a native Linux install (no Docker).
+# install.sh --native writes this to /etc/systemd/system/vsm.service, replacing
+# /opt/vein-server-manager with the chosen install directory.
+[Unit]
+Description=Vein Server Manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=vsm
+WorkingDirectory=/opt/vein-server-manager
+Environment=HOME=/opt/vein-server-manager
+Environment=VSM_DATA_DIR=/opt/vein-server-manager/data
+Environment=VSM_HOST=0.0.0.0
+Environment=VSM_AUTO_INSTALL=true
+Environment=VSM_AUTO_START=true
+Environment=VSM_STOP_SERVER_ON_EXIT=true
+# VSM_ADMIN_PASSWORD and any other VSM_* settings (see .env.example); mode 600.
+EnvironmentFile=-/opt/vein-server-manager/vsm.env
+ExecStart=/opt/vein-server-manager/venv/bin/python -m vsm
+Restart=on-failure
+TimeoutStopSec=180
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
