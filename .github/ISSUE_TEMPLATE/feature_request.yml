@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest something the manager should do.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the README's **Planned** section and the open issues first; a thumbs-up on an
+        existing request counts.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The problem or the job, rather than the solution. What do you do today instead?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: How you imagine it working in the manager.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where you would use it
+      multiple: true
+      options:
+        - Windows app
+        - Linux (native)
+        - Linux (Docker)
+        - Web page from another device
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Mock-ups, examples from other tools, links.

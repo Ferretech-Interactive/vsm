@@ -1,0 +1,95 @@
+name: Bug report
+description: Something in Vein Server Manager does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Problems with the Vein game itself (crashes in game, balance, missing
+        features) belong with Ramjet Studios; this tracker is for the manager only.
+
+        **Security problems: do not open an issue.** Report them privately (see the link on the
+        previous page).
+  - type: input
+    id: version
+    attributes:
+      label: Manager version
+      description: Help > About in the app, or the bottom of the menu on the web page.
+      placeholder: 0.1.0 Beta 1
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it is installed
+      options:
+        - Windows, installed (Windows service)
+        - Windows, portable (zip)
+        - Windows app connected to another computer
+        - Linux, native (install.sh / systemd)
+        - Linux, Docker
+        - Linux, deployed from the Windows app
+        - From source
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11 24H2 / Ubuntu 24.04 / Debian 12
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Guided setup
+        - Starting / stopping / restarting the server
+        - Game install or update (SteamCMD)
+        - Server or gameplay settings
+        - Mods or UE4SS
+        - Players
+        - Schedule or backups
+        - Network (UPnP, port check, firewall)
+        - Discord
+        - Sign-in or password
+        - Desktop window, tray or Servers list
+        - Deploy to a Linux server
+        - Manager updates
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. See ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        The relevant lines only. Look in **System > Event log**, and in the data folder's
+        `logs/manager.log` (and `logs/steamcmd.log` for install or update problems). For the
+        desktop window: `%LOCALAPPDATA%\VeinServerManager\logs\desktop.log`. Linux service:
+        `journalctl -u vsm`; Docker: `docker compose logs`.
+
+        Check before pasting: remove passwords, tokens, Discord webhook URLs and anything else you
+        would not post in public. Public IP addresses and SteamIDs can be replaced too.
+      render: text
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Screenshots, mods in use, whether it worked in an earlier version.
