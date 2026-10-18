@@ -50,6 +50,37 @@ browser on another machine.
   chat-to-Discord relay, REST API.
 - **Linux and Docker** are supported as a secondary option; see [Linux and Docker](#linux-and-docker).
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><a href="docs/screenshots/01-dashboard.png"><img src="docs/screenshots/01-dashboard.png" alt="Dashboard: status, resource use, players online, activity and the live console" width="400"></a><br><sub>Dashboard: status, resource use, players online, activity and the live console</sub></td>
+    <td align="center"><a href="docs/screenshots/02-server-settings.png"><img src="docs/screenshots/02-server-settings.png" alt="Server settings" width="400"></a><br><sub>Server settings</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/screenshots/03-gameplay.png"><img src="docs/screenshots/03-gameplay.png" alt="Gameplay settings, with the game's defaults" width="400"></a><br><sub>Gameplay settings, with the game's defaults</sub></td>
+    <td align="center"><a href="docs/screenshots/04-mods.png"><img src="docs/screenshots/04-mods.png" alt="Mods: pak mods, UE4SS and blueprint mods" width="400"></a><br><sub>Mods: pak mods, UE4SS and blueprint mods</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/screenshots/05-players.png"><img src="docs/screenshots/05-players.png" alt="Players and bans" width="400"></a><br><sub>Players and bans</sub></td>
+    <td align="center"><a href="docs/screenshots/06-schedule.png"><img src="docs/screenshots/06-schedule.png" alt="Scheduled restarts" width="400"></a><br><sub>Scheduled restarts</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/screenshots/07-backups.png"><img src="docs/screenshots/07-backups.png" alt="Backups" width="400"></a><br><sub>Backups</sub></td>
+    <td align="center"><a href="docs/screenshots/08-install-update.png"><img src="docs/screenshots/08-install-update.png" alt="Install / Update and Steam branches" width="400"></a><br><sub>Install / Update and Steam branches</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/screenshots/09-integrations.png"><img src="docs/screenshots/09-integrations.png" alt="Discord integrations" width="400"></a><br><sub>Discord integrations</sub></td>
+    <td align="center"><a href="docs/screenshots/10-system-health-check.png"><img src="docs/screenshots/10-system-health-check.png" alt="Health check" width="400"></a><br><sub>Health check</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/screenshots/11-guided-setup.png"><img src="docs/screenshots/11-guided-setup.png" alt="Guided first-time setup" width="400"></a><br><sub>Guided first-time setup</sub></td>
+    <td align="center"><a href="docs/screenshots/14-deploy-to-linux.png"><img src="docs/screenshots/14-deploy-to-linux.png" alt="Deploying to a Linux server over SSH" width="400"></a><br><sub>Deploying to a Linux server over SSH</sub></td>
+  </tr>
+</table>
+
+The screenshots use invented data: player names, SteamIDs and the public address (from the documentation range) are not real.
+
 ## Install on Windows
 
 Windows 10, 11 or Server 2019 and later (64-bit).
