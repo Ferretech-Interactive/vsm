@@ -100,6 +100,8 @@ in a `data` folder beside the exe, and leaves Windows Firewall to you.
   Anyone else, and every browser or other device, needs the admin password.
 - **Stopping.** Stopping or upgrading the service leaves a running game server alone and picks it up
   again afterwards. Shutting Windows down stops the game server properly, waiting for a save.
+  With **Start server with the manager** on, it is started again when Windows comes back, unless
+  you last stopped it yourself: then it stays stopped until you start it.
 - **Firewall.** Game ports are chosen in the app. Windows Firewall is kept in step automatically,
   with rules tied to one program each: the game server on the two ports you chose, the manager on
   those same ports (used only by the outside port check), and, if you allow other devices, the

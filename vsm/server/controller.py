@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import os
 import re
 import shlex
@@ -33,6 +34,10 @@ STARTING_TIMEOUT = 120  # considered online after this even if the ready marker 
 SAVE_WAIT = 60
 STOP_WAIT = 45
 CRASH_LOOP = (5, 600)  # give up auto-restarting after 5 crashes in 10 minutes
+# Starts and stops a person asked for. Only these change whether the server should be running when
+# the manager next starts; restarts by the scheduler, the watchdog, an update or Windows shutting
+# down do not.
+BY_HAND = {"USER", "DISCORD", "SETUP"}
 
 
 class State(str, Enum):
@@ -143,6 +148,31 @@ class ServerController:
                 if self.running():
                     self._do_stop("SHUTDOWN")
 
+    # ---------- whether the server should be running ----------
+
+    @property
+    def _wanted_file(self):
+        return self.m.paths.data / "server-state.json"
+
+    def wanted(self) -> bool:
+        """False once somebody stopped the server by hand, until somebody starts it again.
+        "Start server with the manager" then waits for them instead of starting it at the next
+        Windows restart or manager update. True when nothing has been recorded yet."""
+        try:
+            return json.loads(self._wanted_file.read_text(encoding="utf-8")).get("wanted") is not False
+        except (OSError, ValueError, AttributeError):
+            return True
+
+    def _note_wanted(self, wanted: bool, trigger: str) -> None:
+        if trigger not in BY_HAND or wanted == self.wanted():
+            return
+        try:
+            temp = self._wanted_file.with_suffix(".tmp")
+            temp.write_text(json.dumps({"wanted": wanted, "by": trigger, "at": time.time()}), encoding="utf-8")
+            os.replace(temp, self._wanted_file)
+        except OSError as e:
+            log.warning("could not record whether the server should run: %s", e)
+
     def _boot(self) -> None:
         pid = self._find_pid()
         if pid:
@@ -151,6 +181,9 @@ class ServerController:
         auto_install = os.environ.get("VSM_AUTO_INSTALL", "").lower() in ("1", "true", "yes")
         auto_start = self.m.config.get().behavior.auto_start
         installed = self.m.paths.server_exe.exists()
+        if auto_start and not self.wanted():
+            auto_start = False
+            self.m.event("SYSTEM", "The game server was stopped by hand, so it was not started with the manager. Start it to have it start with the manager again.")
 
         def install():
             self._do_update(False)
@@ -301,6 +334,7 @@ class ServerController:
         if self._stopping.is_set():
             return  # the manager is exiting; an in-flight restart must not relaunch the game
         self.m.event(trigger, "Start requested.")
+        self._note_wanted(True, trigger)
         if pid := self._find_pid():
             self._attach(pid)
             return
@@ -353,6 +387,8 @@ class ServerController:
 
     def _do_stop(self, trigger: str, final: State = State.OFFLINE) -> None:
         self.m.event(trigger, "Stop requested.")
+        if final == State.OFFLINE:  # a restart stops on its way to starting again
+            self._note_wanted(False, trigger)
         if not self.pid or not self._alive():
             self._clear_process()
             self._set_state(final)

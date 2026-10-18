@@ -188,7 +188,7 @@ export default function Settings() {
 
         <Card title="Behaviour">
           <div className="grid gap-4 sm:grid-cols-2">
-            <Toggle label="Start server with the manager" hint="Launch the game server whenever the manager (or container) starts." checked={cfg.behavior.auto_start} onChange={(v) => set("behavior", "auto_start", v)} />
+            <Toggle label="Start server with the manager" hint="Launch the game server whenever the manager (or container) starts, for example after Windows restarts. Not if you last stopped it yourself: then it stays stopped until you start it." checked={cfg.behavior.auto_start} onChange={(v) => set("behavior", "auto_start", v)} />
             <Toggle label="Restart after a crash" hint="Stops trying after 5 crashes in 10 minutes." checked={cfg.behavior.keep_alive} onChange={(v) => set("behavior", "keep_alive", v)} />
             <Toggle label="Check for manager updates" hint="Asks GitHub whether a newer release exists. Nothing is downloaded automatically." checked={cfg.behavior.update_check} onChange={(v) => set("behavior", "update_check", v)} />
             <Toggle
