@@ -14,7 +14,7 @@ from vsm.desktop import servers as servers_module  # noqa: E402
 from vsm.desktop.remote import deploy, keys, preflight  # noqa: E402
 from vsm.desktop.remote.ssh import Root, Session, SshError, Target, fetch_host_key, fingerprint, key_line, target  # noqa: E402
 from vsm.desktop.remote.tunnel import Tunnel, free_port  # noqa: E402
-from vsm.desktop.servers import ServerList, tunnel_url  # noqa: E402
+from vsm.desktop.servers import ServerError, ServerList, tunnel_url  # noqa: E402
 
 # ---------- input and host keys ----------
 
@@ -102,9 +102,13 @@ def test_deployed_servers_are_saved_without_secrets(tmp_path):
     assert servers.get(entry["id"])["url"] == tunnel_url(entry)
     assert servers.known_hosts() == {"192.168.1.50:22": public}
     # Deploying to the same machine again keeps its identity (and so the window's origin).
+    again = servers.save_ssh("Renamed", "192.168.1.50", 22, public, 8810, 50999)
+    assert (again["id"], again["local_port"], again["host_key"], again["name"]) == (entry["id"], 40123, public, "Renamed")
+    # A different key is never saved over the pinned one: the server has to be removed first.
     _, rekeyed = keys.generate()
-    again = servers.save_ssh("Renamed", "192.168.1.50", 22, rekeyed, 8810, 50999)
-    assert (again["id"], again["local_port"], again["host_key"], again["name"]) == (entry["id"], 40123, rekeyed, "Renamed")
+    with pytest.raises(ServerError):
+        servers.save_ssh("Renamed", "192.168.1.50", 22, rekeyed, 8810, 50999)
+    assert servers.known_hosts() == {"192.168.1.50:22": public}
     servers.set_local_port(entry["id"], 41000)
     reloaded = ServerList(path, None)
     assert reloaded.find_ssh("192.168.1.50", 22)["local_port"] == 41000 and "url" not in json.loads(path.read_text())["servers"][0]
@@ -427,6 +431,8 @@ def test_deployment_sends_fixed_commands_and_cleans_up(job, caplog):
     assert job.state == "done", job.error
     temp = "/tmp/vsm-deploy.Ab12Cd34"
     assert recorder.commands == [
+        ["find", "/tmp", "-maxdepth", "1", "-type", "d", "-name", "vsm-deploy.*", "-user", "deployer",
+         "-mmin", "+60", "-exec", "rm", "-rf", "--", "{}", "+"],
         ["mktemp", "-d", "/tmp/vsm-deploy.XXXXXXXX"],
         ["bash", f"{temp}/install.sh", "--native", "--wheel", f"{temp}/vein_server_manager-0-py3-none-any.whl", "--bind", "127.0.0.1",
          "--tunnel-key", f"{temp}/tunnel.pub", "--no-auto-install", "--password-file", f"{temp}/initial-password"],
@@ -505,3 +511,16 @@ def test_tunnel_says_why_the_server_will_not_forward():
             Tunnel("127.0.0.1", fake.port, fake.host_key, keys.load(private), 2, free_port()).start()
     finally:
         fake.close()
+
+
+def test_a_changed_host_key_is_refused_before_signing_in(job):
+    _, other = keys.generate()
+    job.known = {f"{job.target.host}:{job.target.port}": other}
+    with pytest.raises(SshError, match="not the one saved"):
+        job.check({"method": "password", "password": "secret-password"})
+
+
+def test_deploy_output_kept_in_memory_is_capped(job):
+    for n in range(deploy.MAX_LINES + 500):
+        job.lines.append(f"line {n}")
+    assert len(job.lines) == deploy.MAX_LINES and len(job.status()["lines"]) == 200

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -9,12 +10,19 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 from . import VsmError, __version__
-from .api.auth import same_origin
+from .api.auth import host_allowed, same_origin
 from .api.routes import public, router
 from .manager import Manager
 
 STATIC = Path(__file__).parent / "static"
-CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.steamstatic.com; connect-src 'self' ws: wss:; frame-ancestors 'none'"
+CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.steamstatic.com; connect-src 'self'; frame-ancestors 'none'"
+# A path segment of the built UI. Checked before the path touches the filesystem: on Windows a
+# path like \\host\share would otherwise make the manager connect to that host.
+STATIC_SEGMENT = re.compile(r"^[A-Za-z0-9_\-][A-Za-z0-9._\-]*$")
+WRONG_HOST = (
+    "This manager does not answer to this address. Use its IP address or this computer's name, "
+    "or add the name under Settings > Manage from other devices > Other names (VSM_ALLOWED_HOSTS)."
+)
 
 
 @asynccontextmanager
@@ -32,6 +40,8 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def security(request: Request, call_next):
+        if not host_allowed(request.headers.get("host", ""), app.state.manager.config.get().network.allowed_host_names()):
+            return PlainTextResponse(WRONG_HOST, status_code=421)
         if request.method not in ("GET", "HEAD", "OPTIONS") and not same_origin(request):
             return JSONResponse({"detail": "Cross-origin request refused."}, status_code=403)
         response = await call_next(request)
@@ -56,9 +66,11 @@ def create_app() -> FastAPI:
             raise HTTPException(404)
         if not (STATIC / "index.html").exists():
             return PlainTextResponse("The web UI has not been built. Run `npm install && npm run build` in ./web.", status_code=503)
-        target = (STATIC / path).resolve()
-        if path and target.is_file() and target.is_relative_to(STATIC.resolve()):
-            return FileResponse(target)
+        segments = path.split("/")
+        if path and all(STATIC_SEGMENT.match(s) for s in segments):
+            target = STATIC.joinpath(*segments)
+            if target.is_file():
+                return FileResponse(target)
         return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app

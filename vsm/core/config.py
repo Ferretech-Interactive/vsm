@@ -96,7 +96,13 @@ class DiscordConfig(BaseModel):
     bot_enabled: bool = False
     bot_token: str = Field("", max_length=200)
     channel_id: str = Field("", pattern=r"^\d{0,25}$")
+    # Role IDs (comma separated) whose members may use !start, !stop, !restart and !backup, besides
+    # members who can manage the Discord server.
+    command_roles: str = Field("", max_length=500, pattern=r"^[\d, ]*$")
     live_status_message_id: str = Field("", pattern=r"^\d{0,25}$")
+
+    def command_role_ids(self) -> set[int]:
+        return {int(r) for r in self.command_roles.replace(" ", "").split(",") if r}
 
     @field_validator("webhook_url")
     @classmethod
@@ -117,6 +123,12 @@ class NetworkConfig(BaseModel):
     upnp_adapter: str = Field("", max_length=100, pattern=r"^[^\x00-\x1f]*$")
     # Port Probe Service used by the optional "check from the internet". Empty turns the check off.
     probe_url: str = Field("https://be1.ferretech.org/v1/probe", pattern=r"^(https://[A-Za-z0-9.\-]{1,253}(:\d{1,5})?/[\w\-./]{0,200})?$")
+    # Extra names the manager answers to, comma separated (e.g. a DNS name on your network or a
+    # reverse proxy's). IP addresses, localhost and this computer's own name always work.
+    allowed_hosts: str = Field("", max_length=500, pattern=r"^[A-Za-z0-9.\-, ]*$")
+
+    def allowed_host_names(self) -> frozenset[str]:
+        return frozenset(h.strip().lower().rstrip(".") for h in self.allowed_hosts.split(",") if h.strip())
 
 
 class ManagerConfig(BaseModel):
@@ -145,6 +157,7 @@ ENV_OVERRIDES = {
     "VSM_UPDATE_ON_START": ("behavior", "update_on_start", _bool),
     "VSM_DISCORD_WEBHOOK_URL": ("discord", "webhook_url", str),
     "VSM_PROBE_URL": ("network", "probe_url", str),
+    "VSM_ALLOWED_HOSTS": ("network", "allowed_hosts", str),
 }
 
 

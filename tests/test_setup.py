@@ -110,7 +110,7 @@ def test_setup_can_choose_the_first_admin_password(tmp_path, monkeypatch):
     from vsm.app import create_app
 
     with TestClient(create_app(), client=("127.0.0.1", 50000)) as c:
-        c.post("/api/auth/local", json={"token": (tmp_path / "desktop.token").read_text()})
+        c.post("/api/auth/local", json={"token": (tmp_path / "desktop-auth" / "desktop.token").read_text()})
         stub(c, monkeypatch)
         remote = {**PLAN, "config": {"network": {"remote_access": True}}}
         assert c.post("/api/setup", json=remote).status_code == 400  # other devices need a password first
@@ -145,7 +145,7 @@ def test_remote_access_setting_needs_a_password(tmp_path, monkeypatch):
     from vsm.app import create_app
 
     with TestClient(create_app(), client=("127.0.0.1", 50000)) as c:
-        c.post("/api/auth/local", json={"token": (tmp_path / "desktop.token").read_text()})
+        c.post("/api/auth/local", json={"token": (tmp_path / "desktop-auth" / "desktop.token").read_text()})
         assert c.put("/api/config", json={"network": {"remote_access": True}}).status_code == 400
         c.post("/api/auth/password", json={"new": PASSWORD})
         assert c.put("/api/config", json={"network": {"remote_access": True}}).status_code == 200

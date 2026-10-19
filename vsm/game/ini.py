@@ -12,8 +12,14 @@ from pathlib import Path
 from .. import VsmError
 
 
+def _one_line(text: str) -> bool:
+    """No line break of any kind (splitlines() also breaks on \\v, \\f, \\x1c-\\x1e, \\x85, \\u2028,
+    \\u2029) and no other control character: a value must not be able to start a new ini line."""
+    return len(text.splitlines()) <= 1 and not any(ord(c) < 32 and c != "\t" or 0x7F <= ord(c) <= 0x9F for c in text)
+
+
 def _check(key: str, value: str) -> None:
-    if not key or any(c in key for c in "=[]\r\n") or "\n" in value or "\r" in value:
+    if not key or any(c in key for c in "=[]") or not _one_line(key) or not _one_line(value) or value.endswith(("\r", "\n")):
         raise VsmError("Invalid ini key or value.")
 
 

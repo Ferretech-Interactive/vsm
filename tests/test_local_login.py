@@ -19,12 +19,12 @@ def make_client(tmp_path, monkeypatch, *, local_login: bool, peer: str = "127.0.
 
 
 def token(tmp_path) -> str:
-    return (tmp_path / "desktop.token").read_text()
+    return (tmp_path / "desktop-auth" / "desktop.token").read_text()
 
 
 def test_disabled_by_default(tmp_path, monkeypatch):
     with make_client(tmp_path, monkeypatch, local_login=False) as c:
-        assert not (tmp_path / "desktop.token").exists()
+        assert not (tmp_path / "desktop-auth" / "desktop.token").exists()
         assert c.post("/api/auth/local", json={"token": "anything"}).status_code == 403
 
 

@@ -290,6 +290,8 @@ def _keep_sessions(manager) -> None:
         folder = manager.self_update.folder
         folder.mkdir(parents=True, exist_ok=True)
         fd = os.open(folder / SESSIONS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)  # the mode above only applies to a new file
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(manager.auth.export_sessions(), f)
     except Exception:  # noqa: BLE001 - people sign in again, nothing worse

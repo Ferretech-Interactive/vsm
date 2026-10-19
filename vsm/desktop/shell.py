@@ -30,13 +30,15 @@ log = logging.getLogger("vsm.desktop")
 ICON = Path(__file__).parent / "icon.png"
 TITLE = "Vein Server Manager"
 
-# Runs inside the window on every page load. The token never appears in a URL.
+# Runs inside the window on every page load. The token never appears in a URL. The page is checked
+# again inside the script: the window may have moved on between deciding to sign in and the script running.
 SIGN_IN_JS = """
 (async () => {
+  if (location.origin !== %(origin)s) return;
   const state = await (await fetch('/api/auth/state')).json();
   if (state.authenticated) return;
   const r = await fetch('/api/auth/local', {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({token: %s})
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({token: %(secret)s})
   });
   if (r.ok) location.reload();
 })();
@@ -47,10 +49,11 @@ SIGN_IN_JS = """
 # Used once, and only on that server's own page (see _on_loaded).
 LOGIN_JS = """
 (async () => {
+  if (location.origin !== %(origin)s) return;
   const state = await (await fetch('/api/auth/state')).json();
   if (state.authenticated) return;
   const r = await fetch('/api/auth/login', {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({password: %s})
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({password: %(secret)s})
   });
   if (r.ok) location.reload();
 })();
@@ -112,6 +115,54 @@ def window_url(url: str) -> str:
     (which has its own Help > About) and not in a browser. The window has no bridge to say so."""
     parts = urlsplit(url)
     return urlunsplit((parts.scheme, parts.netloc, parts.path or "/", "desktop=1", ""))
+
+
+def origin_of(url: str) -> str:
+    """`location.origin` of a page at `url`, as the browser writes it (default ports left out)."""
+    parts = urlsplit(url)
+    default = {"http": 80, "https": 443}.get(parts.scheme)
+    port = f":{parts.port}" if parts.port and parts.port != default else ""
+    return f"{parts.scheme}://{parts.hostname}{port}"
+
+
+def expose_api(window, api) -> None:
+    """Give a window's page the public methods of `api`, and nothing else.
+
+    Not passed as pywebview's js_api: pywebview looks a call's name up attribute by attribute
+    along its dots, so a page could reach `_shell` (and from there anything) through the object.
+    Exposed functions are looked up by exact name only. Each is a plain function with the
+    method's parameter names, so the page calls them as before (pywebview.api.name(...))."""
+    import inspect
+
+    for name in dir(type(api)):
+        if name.startswith("_") or not callable(getattr(type(api), name)):
+            continue
+        method = getattr(api, name)
+        params = list(inspect.signature(method).parameters)
+        source = f"def {name}({', '.join(params)}):\n    return _method({', '.join(params)})\n"
+        scope = {"_method": method}
+        exec(source, scope)  # noqa: S102 - names come from our own classes
+        window.expose(scope[name])
+
+
+class _SafeBrowser:
+    """What pywebview uses to open a page's new-window links: web addresses only. Handing anything
+    else to Windows (search-ms:, file:, ms-...:) would let a page from a remote manager start programs."""
+
+    @staticmethod
+    def open(url, *args, **kwargs) -> bool:
+        if urlsplit(str(url)).scheme.lower() in ("http", "https"):
+            return webbrowser.open(str(url))
+        log.warning("refused to open a %s: link from a page", urlsplit(str(url)).scheme or "schemeless")
+        return False
+
+
+def install_safe_browser() -> None:
+    from webview.platforms import edgechromium
+
+    if not hasattr(edgechromium, "webbrowser"):  # pywebview changed: fail loudly rather than silently unprotected
+        raise RuntimeError("pywebview no longer opens links the expected way; review _SafeBrowser")
+    edgechromium.webbrowser = _SafeBrowser()
 
 
 def is_local_origin(page_url: str, local_url: str | None) -> bool:
@@ -255,9 +306,10 @@ class Shell:
                 self._about_window = None
         kind = {"service": "Installed: runs as a Windows service", "client": "Installed: connects to other servers only"}.get(settings.mode(), "Portable")
         window = webview.create_window(
-            "About Vein Server Manager", html=about_html(__version__, kind, ICON, self.can_update), js_api=AboutApi(self),
+            "About Vein Server Manager", html=about_html(__version__, kind, ICON, self.can_update),
             width=440, height=530, resizable=False, background_color="#09090b",
         )
+        expose_api(window, AboutApi(self))
         window.events.closed += lambda: setattr(self, "_about_window", None)
         theme.darken_when_shown(window)
         self._about_window = window
@@ -370,7 +422,7 @@ class Shell:
         pending, self._pending_login = self._pending_login, None
         if pending and is_local_origin(self.window.get_current_url() or "", pending[0]):
             try:
-                self.window.evaluate_js(LOGIN_JS % json.dumps(pending[1]))
+                self.window.evaluate_js(LOGIN_JS % {"origin": json.dumps(origin_of(pending[0])), "secret": json.dumps(pending[1])})
             except Exception as e:
                 log.warning("sign-in to the deployed server failed: %s", e)
             return
@@ -380,7 +432,7 @@ class Shell:
         if not token:
             return  # not an administrator, or no local manager: the page shows its login form
         try:
-            self.window.evaluate_js(SIGN_IN_JS % json.dumps(token))
+            self.window.evaluate_js(SIGN_IN_JS % {"origin": json.dumps(origin_of(self.url)), "secret": json.dumps(token)})
         except Exception as e:
             log.warning("automatic sign-in failed: %s", e)
 
@@ -501,7 +553,8 @@ class Shell:
             system.message_box(f"Deploying to a Linux server is not available in this copy of the app ({e}).")
             return
         api = DeployApi(self)
-        window = webview.create_window("Deploy to a Linux server", html=DEPLOY_HTML, js_api=api, width=600, height=640, background_color="#09090b")
+        window = webview.create_window("Deploy to a Linux server", html=DEPLOY_HTML, width=600, height=640, background_color="#09090b")
+        expose_api(window, api)
 
         def closed() -> None:
             self._deploy_window = None
@@ -547,7 +600,8 @@ class Shell:
                 return
             except Exception:
                 self._servers_window = None
-        window = webview.create_window("Servers", html=SERVERS_HTML, js_api=ServersApi(self), width=560, height=560, background_color="#09090b")
+        window = webview.create_window("Servers", html=SERVERS_HTML, width=560, height=560, background_color="#09090b")
+        expose_api(window, ServersApi(self))
         window.events.closed += lambda: setattr(self, "_servers_window", None)
         theme.darken_when_shown(window)
         self._servers_window = window
@@ -636,6 +690,7 @@ class Shell:
         # Backups and the diagnostics zip are downloads; pywebview refuses them unless told otherwise.
         # Each one still goes through a Save As dialog.
         webview.settings["ALLOW_DOWNLOADS"] = True
+        install_safe_browser()
         storage = settings.client_dir() / "webview"
         storage.mkdir(parents=True, exist_ok=True)
         try:

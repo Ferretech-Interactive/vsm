@@ -163,7 +163,7 @@ function Health() {
 }
 
 function RemoteAccess({ auth }: { auth: AuthState | null }) {
-  const { cfg, set } = useConfig();
+  const { cfg, set, save } = useConfig();
   const { status } = useLive();
   const toast = useToast();
   const [changed, setChanged] = useState(false);
@@ -188,6 +188,20 @@ function RemoteAccess({ auth }: { auth: AuthState | null }) {
           disabled={auth.needs_password && !cfg.network.remote_access}
           onChange={apply}
         />
+        <Field
+          label="Other names for this computer"
+          hint="Only needed to open the manager by a name other than its IP address or this computer's own name, for example a DNS name on your network. Comma separated. Other names are refused, so a web page cannot pretend to be this manager."
+        >
+          <div className="flex gap-2">
+            <Input
+              value={cfg.network.allowed_hosts}
+              onChange={(e) => set("network", "allowed_hosts", e.target.value)}
+              placeholder="vein.home.lan"
+              className="font-mono"
+            />
+            <Button onClick={() => save("network")}>Save</Button>
+          </div>
+        </Field>
         {changed && (
           <div className="flex flex-wrap items-center gap-3 rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-2.5 text-sm text-sky-200">
             This takes effect when the manager restarts. The game server keeps running.

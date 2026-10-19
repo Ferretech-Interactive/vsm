@@ -122,7 +122,10 @@ class Manager:
         generated = self.auth.bootstrap()
         local_login = os.environ.get("VSM_LOCAL_LOGIN", "").lower()
         desktop = local_login in ("1", "true", "yes", "pipe")
-        token_file = self.paths.data / "desktop.token"
+        from .api.auth import LOCAL_TOKEN
+
+        token_file = self.paths.data.joinpath(*LOCAL_TOKEN)
+        (self.paths.data / "desktop.token").unlink(missing_ok=True)  # where older versions kept it
         if local_login == "pipe":
             # Windows service: administrators get one-time codes over a named pipe instead.
             from .desktop.localauth import PipeServer

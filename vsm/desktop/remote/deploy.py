@@ -19,6 +19,7 @@ import secrets
 import sys
 import threading
 import urllib.request
+from collections import deque
 from pathlib import Path
 
 from ... import __version__
@@ -29,6 +30,7 @@ from .tunnel import Tunnel, free_port
 log = logging.getLogger("vsm.desktop.remote")
 
 INSTALL_TIMEOUT = 45 * 60
+MAX_LINES = 2000
 HEALTH_TIMEOUT = 120
 _TEMP = re.compile(r"^/tmp/vsm-deploy\.[A-Za-z0-9]{8}$")
 _WHEEL = "vein_server_manager-{version}-py3-none-any.whl"
@@ -81,7 +83,7 @@ class Deployment:
         # progress of `install`, polled by the window
         self.state = "idle"  # idle / working / done / failed
         self.step = ""
-        self.lines: list[str] = []
+        self.lines: deque[str] = deque(maxlen=MAX_LINES)  # a hostile server must not fill this PC's memory
         self.error: str | None = None
         self.result: dict | None = None
         self._password: str | None = None
@@ -107,6 +109,11 @@ class Deployment:
         """`auth`: {"method": "password" | "key" | "agent", "password", "key_path", "passphrase", "sudo_password"}."""
         if not self.target or not self.host_key:
             raise SshError("Start again from the first step.")
+        saved = self.known.get(f"{self.target.host}:{self.target.port}")
+        if saved and saved != self.host_key:
+            # Never a prompt: a changed key is what impersonating the server looks like.
+            raise SshError("This server's key is not the one saved when it was deployed, so nothing was sent to it. "
+                           "If you reinstalled the server, remove it under Servers first, then deploy again.")
         bundle()  # fail now, not after signing in, if there is nothing to install
         method = auth.get("method")
         password = str(auth.get("password") or "") if method == "password" else ""
@@ -143,11 +150,12 @@ class Deployment:
             raise SshError("That kind of install is not possible on this server.")
         if self.state == "working":
             raise SshError("The installation is already running.")
-        self.state, self.step, self.lines, self.error, self.result = "working", "Preparing", [], None, None
+        self.state, self.step, self.error, self.result = "working", "Preparing", None, None
+        self.lines = deque(maxlen=MAX_LINES)
         threading.Thread(target=self._install, args=(kind, on_done), name="deploy", daemon=True).start()
 
     def status(self) -> dict:
-        return {"state": self.state, "step": self.step, "lines": self.lines[-200:], "error": self.error, "result": self.result}
+        return {"state": self.state, "step": self.step, "lines": list(self.lines)[-200:], "error": self.error, "result": self.result}
 
     def take_password(self) -> str | None:
         """The admin password generated for a new install. Handed out once."""
@@ -175,6 +183,9 @@ class Deployment:
             password = secrets.token_urlsafe(18) if fresh else None
 
             self._say("Copying the files to the server")
+            # Upload folders left behind by a deployment that lost its connection (they hold a password).
+            session.run(["find", "/tmp", "-maxdepth", "1", "-type", "d", "-name", "vsm-deploy.*", "-user", self.target.user,
+                         "-mmin", "+60", "-exec", "rm", "-rf", "--", "{}", "+"])
             code, out = session.run(["mktemp", "-d", "/tmp/vsm-deploy.XXXXXXXX"])
             temp = out.strip()
             if code != 0 or not _TEMP.match(temp):

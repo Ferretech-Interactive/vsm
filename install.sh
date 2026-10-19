@@ -114,16 +114,61 @@ setup_tunnel() {
         useradd --system --create-home --home-dir "$home" --shell "$shell" "$TUNNEL_USER"
     fi
     usermod -p '*' "$TUNNEL_USER" # no password, but not "locked": some sshd builds refuse keys for locked accounts
-    install -d -m 700 -o "$TUNNEL_USER" -g "$TUNNEL_USER" "$home/.ssh"
-    touch "$home/.ssh/authorized_keys"
-    if ! grep -qF "$key" "$home/.ssh/authorized_keys"; then
-        printf 'restrict,port-forwarding,permitopen="127.0.0.1:%s" %s\n' "$PORT" "$key" >>"$home/.ssh/authorized_keys"
-    fi
-    chown "$TUNNEL_USER:$TUNNEL_USER" "$home/.ssh/authorized_keys"
-    chmod 600 "$home/.ssh/authorized_keys"
+    # Owned by root: the account must not be able to edit its own key's limits.
+    chown root:root "$home"
+    chmod 755 "$home"
+    rm -rf "$home/.ssh.new"
+    install -d -m 755 -o root -g root "$home/.ssh.new"
+    {
+        # Every key this file already had (one per PC that deployed here) plus the new one, each limited
+        # to the current port. Only the key itself is kept from old lines, never their options.
+        [ ! -f "$home/.ssh/authorized_keys" ] || grep -Eo 'ssh-ed25519 [A-Za-z0-9+/]{60,80}={0,2}' "$home/.ssh/authorized_keys" || true
+        printf '%s\n' "$key"
+    } | sort -u | while read -r k; do
+        printf 'restrict,port-forwarding,permitopen="127.0.0.1:%s" %s\n' "$PORT" "$k"
+    done >"$home/.ssh.new/authorized_keys"
+    chmod 644 "$home/.ssh.new/authorized_keys"
+    rm -rf "$home/.ssh" && mv "$home/.ssh.new" "$home/.ssh"
+    limit_tunnel_sshd
     if have sshd && sshd -T 2>/dev/null | grep -qi '^allowtcpforwarding no'; then
         warn "This server's sshd has AllowTcpForwarding off, so the app cannot reach the manager through SSH."
     fi
+}
+
+# authorized_keys options cannot stop everything (listening ports, Unix sockets), so sshd itself is
+# told what this account may do. Only where sshd reads sshd_config.d, and only if the result is valid.
+limit_tunnel_sshd() {
+    local sshd conf=/etc/ssh/sshd_config.d/vsm-tunnel.conf backup=""
+    sshd=$(command -v sshd || echo /usr/sbin/sshd)
+    if [ ! -x "$sshd" ] || [ ! -d /etc/ssh/sshd_config.d ] \
+        || ! grep -Eqi '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*' /etc/ssh/sshd_config 2>/dev/null; then
+        warn "Could not add sshd limits for '$TUNNEL_USER' (no sshd_config.d); its key is still limited to port $PORT."
+        return 0
+    fi
+    [ ! -f "$conf" ] || { backup=$(mktemp) && cp "$conf" "$backup"; }
+    cat >"$conf" <<EOF
+# Written by the Vein Server Manager installer: the '$TUNNEL_USER' account may only open
+# connections to the manager's port on this machine.
+Match User $TUNNEL_USER
+    AllowTcpForwarding local
+    AllowStreamLocalForwarding no
+    PermitListen none
+    PermitOpen 127.0.0.1:$PORT
+    X11Forwarding no
+    AllowAgentForwarding no
+    PermitTTY no
+    PermitTunnel no
+    ForceCommand /bin/false
+EOF
+    chmod 644 "$conf"
+    if ! "$sshd" -t 2>/dev/null; then
+        if [ -n "$backup" ]; then mv "$backup" "$conf"; else rm -f "$conf"; fi
+        warn "sshd did not accept the limits for '$TUNNEL_USER'; they were not added."
+        return 0
+    fi
+    [ -z "$backup" ] || rm -f "$backup"
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null \
+        || warn "Reload sshd for the '$TUNNEL_USER' limits to take effect."
 }
 
 # A first install with no password handed in makes one up. It reaches the manager the same way
@@ -138,6 +183,9 @@ first_password() {
 }
 
 new_password() { head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20; }
+
+# A password file handed in (by the Windows app) is deleted as soon as the manager has its copy.
+forget_password_file() { [ -n "$TEMP_PASSWORD_FILE" ] || rm -f "$PASSWORD_FILE"; }
 
 open_firewall() { # game ports only; the web UI port is left to the admin
     local game="${VSM_GAME_PORT:-7777}" query="${VSM_QUERY_PORT:-27015}"
@@ -192,6 +240,7 @@ install_docker_mode() {
         (cd "$DIR/src" && docker compose build --quiet \
             && docker compose run --rm --no-deps -T --entrypoint sh vsm -c \
                 'umask 077; cat >"$VSM_DATA_DIR/initial-password"; chown "${PUID:-1000}:${PGID:-1000}" "$VSM_DATA_DIR/initial-password"' <"$PASSWORD_FILE")
+        forget_password_file
     fi
     (cd "$DIR/src" && docker compose up -d --build --quiet-pull)
     LOGS_HINT="cd $DIR/src && docker compose logs -f"
@@ -200,6 +249,8 @@ install_docker_mode() {
 # ---------------------------------------------------------------- native mode
 
 python_ok() { python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; }
+
+new_venv() { python3 -m venv "$DIR/venv.new"; }
 
 ensure_python() {
     # Say so before installing anything if this distribution's Python can never be new enough.
@@ -236,15 +287,19 @@ ensure_node() { # only needed to build the web UI; a private copy is used if the
 install_native_mode() {
     ensure_python
     local unit
+    # Earlier versions gave the whole folder to the service account. Take the folder itself back
+    # first, so nothing in it can be swapped while the files below are replaced.
+    chown root:root "$DIR"
+    chmod 755 "$DIR"
+    [ ! -L "$DIR/data" ] || die "$DIR/data is a link; refusing to continue."
+    rm -rf "$DIR/venv.new"
     if [ -n "$WHEEL" ]; then
         # The package already contains the built web UI: no source, no Node.js.
         stage_bundle "$DIR/src"
         unit="$DIR/src/vsm.service"
         say "Installing the manager into $DIR/venv"
-        python3 -m venv "$DIR/venv"
-        "$DIR/venv/bin/pip" install --quiet --disable-pip-version-check --upgrade "$DIR/src/$(basename "$WHEEL")[discord]"
-        # The same version number can carry different files (a rebuilt package): always replace ours.
-        "$DIR/venv/bin/pip" install --quiet --disable-pip-version-check --force-reinstall --no-deps "$DIR/src/$(basename "$WHEEL")"
+        new_venv
+        "$DIR/venv.new/bin/pip" install --quiet --disable-pip-version-check "$DIR/src/$(basename "$WHEEL")[discord]"
     else
         ensure_node
         fetch_source "$DIR/src"
@@ -255,28 +310,49 @@ install_native_mode() {
         [ -n "${NODE_TMP:-}" ] && rm -rf "$NODE_TMP"
 
         say "Installing the manager into $DIR/venv"
-        python3 -m venv "$DIR/venv"
-        "$DIR/venv/bin/pip" install --quiet --disable-pip-version-check --upgrade "$DIR/src[discord]"
+        new_venv
+        "$DIR/venv.new/bin/pip" install --quiet --disable-pip-version-check "$DIR/src[discord]"
     fi
+    # Swapped in only once complete; the old one is never run by root again.
+    rm -rf "$DIR/venv" && mv "$DIR/venv.new" "$DIR/venv"
 
-    # The Unreal server refuses to run as root, so the service gets its own account.
-    id vsm >/dev/null 2>&1 || useradd --system --home-dir "$DIR" --shell /usr/sbin/nologin vsm
+    # The Unreal server refuses to run as root, so the service gets its own account. It owns the data
+    # folder and nothing else: root runs the program files on every update, so the service must not be
+    # able to change them (that would hand root to anything running as the service, a mod for example).
+    if id vsm >/dev/null 2>&1; then
+        if [ "$(getent passwd vsm | cut -d: -f6)" != "$DIR/data" ]; then
+            # usermod refuses while the account runs anything; it is restarted below in any case.
+            have systemctl && systemctl stop vsm 2>/dev/null || true
+            usermod -d "$DIR/data" vsm 2>/dev/null || warn "Could not move the 'vsm' account's home to $DIR/data."
+        fi
+    else
+        useradd --system --home-dir "$DIR/data" --shell /usr/sbin/nologin vsm
+    fi
     mkdir -p "$DIR/data"
+    chown vsm: "$DIR/data"
+    chmod 750 "$DIR/data"
+    [ ! -L "$DIR/vsm.env" ] || rm -f "$DIR/vsm.env" # written below as root: never through a link
     if [ ! -f "$DIR/vsm.env" ]; then
         printf 'VSM_PORT=%s\n' "$PORT" >"$DIR/vsm.env"
         if [ ! -f "$DIR/data/auth.json" ]; then # data kept from an earlier install already has its password
             first_password
             # Read once by the manager at its first start, then deleted.
-            install -m 600 "$PASSWORD_FILE" "$DIR/data/initial-password"
+            # Written as the service account itself: root writing into a folder that account controls
+            # could be pointed elsewhere through a link.
+            runuser -u vsm -- sh -c 'umask 077; rm -f "$1"; cat >"$1"' sh "$DIR/data/initial-password" <"$PASSWORD_FILE"
+            forget_password_file
         fi
     fi
     deploy_settings "$DIR/vsm.env" VSM_HOST
-    chmod 600 "$DIR/vsm.env"
-    chown -R vsm: "$DIR"
+    chown root:vsm "$DIR/vsm.env"
+    chmod 640 "$DIR/vsm.env"
+    chown -R root:root "$DIR/src" "$DIR/venv"
+    chmod -R go-w "$DIR/src" "$DIR/venv"
     open_firewall
 
     if have systemctl && [ -d /run/systemd/system ]; then
         sed "s#/opt/vein-server-manager#$DIR#g" "$unit" >/etc/systemd/system/vsm.service
+        case "$DIR" in /home/* | /root/* | /run/user/*) sed -i '/^ProtectHome=/d' /etc/systemd/system/vsm.service ;; esac
         systemctl daemon-reload
         systemctl enable --quiet vsm
         systemctl restart vsm
@@ -314,6 +390,12 @@ main() {
     [ -z "$PASSWORD_FILE" ] || [ -s "$PASSWORD_FILE" ] || die "The password file is missing or empty."
     [ -z "$TUNNEL_KEY" ] || [ -s "$TUNNEL_KEY" ] || die "The tunnel key file is missing or empty."
     case "$BIND" in "" | 127.0.0.1 | 0.0.0.0) ;; *) die "--bind takes 127.0.0.1 or 0.0.0.0." ;; esac
+    case "$PORT" in "" | *[!0-9]*) die "--port takes a number." ;; esac
+    [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ] || die "--port must be between 1024 and 65535."
+    # Used in file contents and a sed expression below: an absolute path of plain characters only.
+    printf '%s' "$DIR" | grep -Eq '^/[A-Za-z0-9._/-]+$' || die "--dir must be an absolute path of letters, digits, '.', '_', '-' and '/'."
+    case "/$DIR/" in */../* | */./*) die "--dir must not contain '.' or '..' parts." ;; esac
+    [ "$DIR" != "/" ] || die "--dir must not be /."
 
     preflight
     case "$MODE" in

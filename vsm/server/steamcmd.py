@@ -14,8 +14,8 @@ import zipfile
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from ..core.network import clean_dll_search
-from ..core.paths import IS_WINDOWS, VEIN_APP_ID
+from ..core.network import child_env, clean_dll_search
+from ..core.paths import IS_WINDOWS, VEIN_APP_ID, extract_zip
 
 STEAMCMD_URL = (
     "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
@@ -58,7 +58,7 @@ class SteamCmd:
             blob = io.BytesIO(r.read())
         if IS_WINDOWS:
             with zipfile.ZipFile(blob) as z:
-                z.extractall(self.exe.parent)
+                extract_zip(z, [(i, i.filename) for i in z.infolist()], self.exe.parent, max_bytes=200_000_000, max_files=1000)
         else:
             with tarfile.open(fileobj=blob, mode="r:gz") as t:
                 t.extractall(self.exe.parent, filter="data")
@@ -99,7 +99,7 @@ class SteamCmd:
             with clean_dll_search():
                 self._proc = subprocess.Popen(
                     cmd, cwd=self.exe.parent, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT, text=True, errors="replace", **flags,
+                    stderr=subprocess.STDOUT, text=True, errors="replace", env=child_env(), **flags,
                 )
         except OSError as e:
             self._out(f"ERROR: {e}")

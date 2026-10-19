@@ -109,6 +109,9 @@ def _http(url: str, data: bytes | None = None, headers: dict | None = None) -> b
 
 
 def _parse_xml(body: bytes) -> ET.Element:
+    # Only plain ASCII/UTF-8 XML: another encoding (UTF-16) would hide a DOCTYPE from the check below.
+    if not body.removeprefix(b"\xef\xbb\xbf").lstrip().startswith(b"<"):
+        raise UpnpError("The router sent a reply that is not valid XML.")
     if b"<!DOCTYPE" in body or b"<!ENTITY" in body:
         raise UpnpError("The router sent a document with entity definitions; refusing to parse it.")
     try:

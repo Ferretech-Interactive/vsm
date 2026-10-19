@@ -45,14 +45,18 @@ def test_a_release_without_this_projects_setup_file_is_not_offered(assets):
 
 def test_only_a_valid_signature_from_the_publisher_is_trusted():
     ours = f'CN="{PUBLISHER}", O="{PUBLISHER}", L=Somewhere, S=NY, C=US'
+    certum = "CN=Certum Extended Validation Code Signing 2021 CA, O=Asseco Data Systems S.A., C=PL"
     assert common_name(ours) == PUBLISHER and common_name(f"CN={PUBLISHER}, O=x") == PUBLISHER
-    assert is_trusted("Valid", ours) is True
-    assert is_trusted("NotSigned", "") is False  # a beta, or anything unsigned
-    assert is_trusted("HashMismatch", ours) is False  # tampered with after signing
-    assert is_trusted("UnknownError", ours) is False  # chain not trusted
-    assert is_trusted("Valid", "CN=Someone Else LLC, O=Someone Else LLC, C=US") is False
-    assert is_trusted("Valid", f"CN=Evil, O={PUBLISHER}, OU=CN={PUBLISHER}") is False  # the name must be the CN itself
-    assert is_trusted("Valid", f"CN={PUBLISHER} Fake, C=US") is False
+    assert is_trusted("Valid", ours, certum) is True
+    assert is_trusted("NotSigned", "", "") is False  # a beta, or anything unsigned
+    assert is_trusted("HashMismatch", ours, certum) is False  # tampered with after signing
+    assert is_trusted("UnknownError", ours, certum) is False  # chain not trusted
+    assert is_trusted("Valid", "CN=Someone Else LLC, O=Someone Else LLC, C=US", certum) is False
+    assert is_trusted("Valid", f"CN=Evil, O={PUBLISHER}, OU=CN={PUBLISHER}", certum) is False  # the name must be the CN itself
+    assert is_trusted("Valid", f"CN={PUBLISHER} Fake, C=US", certum) is False
+    # Our name on a certificate from another authority is not ours.
+    assert is_trusted("Valid", ours, "CN=Other Code Signing CA, O=Other, C=US") is False
+    assert is_trusted("Valid", ours, f"CN=Evil CA, OU=CN={certum}") is False
 
 
 def test_download_refuses_what_is_not_ours(tmp_path, monkeypatch):

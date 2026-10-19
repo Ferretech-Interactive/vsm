@@ -8,8 +8,9 @@ Wants=network-online.target
 
 [Service]
 User=vsm
-WorkingDirectory=/opt/vein-server-manager
-Environment=HOME=/opt/vein-server-manager
+# The service account owns data/ only; the program files beside it belong to root.
+WorkingDirectory=/opt/vein-server-manager/data
+Environment=HOME=/opt/vein-server-manager/data
 Environment=VSM_DATA_DIR=/opt/vein-server-manager/data
 Environment=VSM_HOST=0.0.0.0
 Environment=VSM_AUTO_INSTALL=true
@@ -19,6 +20,16 @@ Environment=VSM_STOP_SERVER_ON_EXIT=true
 EnvironmentFile=-/opt/vein-server-manager/vsm.env
 ExecStart=/opt/vein-server-manager/venv/bin/python -m vsm
 Restart=on-failure
+# Hardening. ProtectSystem=full leaves the data folder writable (it is not under /usr, /boot or /etc).
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
 TimeoutStopSec=180
 KillMode=mixed
 

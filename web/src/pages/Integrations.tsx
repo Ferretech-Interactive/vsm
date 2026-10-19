@@ -74,15 +74,18 @@ export default function Integrations() {
               <Field label="Channel ID" hint="Commands are only accepted in this channel.">
                 <Input value={d.channel_id} onChange={(e) => set("discord", "channel_id", e.target.value)} inputMode="numeric" className="font-mono" />
               </Field>
+              <Field
+                label="Roles that may control the server"
+                hint="Role IDs, comma separated. !start, !stop, !restart and !backup work for members who can manage the Discord server, and for these roles. !status and !ip work for anyone in the channel."
+              >
+                <Input value={d.command_roles} onChange={(e) => set("discord", "command_roles", e.target.value)} inputMode="numeric" className="font-mono" placeholder="Optional" />
+              </Field>
             </Grid>
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-300">
-              Anyone who can post in that channel can stop or restart the server. Use a private, staff-only channel.
-            </div>
             <ol className="list-decimal space-y-1 pl-5 text-xs text-zinc-400">
               <li>discord.com/developers/applications → New Application → Bot → enable “Message Content Intent”.</li>
               <li>Reset Token, copy it and paste it above.</li>
               <li>OAuth2 → URL Generator → scope “bot” with Send Messages, Manage Messages and Read Message History, then open the URL to invite it.</li>
-              <li>In Discord, enable Developer Mode, right-click the channel and Copy Channel ID.</li>
+              <li>In Discord, enable Developer Mode, right-click the channel and Copy Channel ID. Role IDs are copied from Server Settings → Roles.</li>
             </ol>
           </div>
         </Card>

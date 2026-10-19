@@ -90,7 +90,10 @@ class _AdminApi:
         self.url = url
         if not _wait_healthy(url, 90):
             raise RuntimeError("the service did not start")
-        code = localauth.request_code(expected_server_pid=system.service_state()[1])
+        pid = system.service_state()[1]
+        if _listener_pid(settings.port()) != pid:
+            raise RuntimeError(f"another program is using port {settings.port()}")
+        code = localauth.request_code(expected_server_pid=pid)
         if not code:
             raise RuntimeError("the service refused the installer's sign-in")
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
@@ -166,7 +169,12 @@ def _service_window_target(url: str):
         # Something else took the port while the service was down; never send it a sign-in code.
         system.message_box(f"Another program is using port {settings.port()}, so the manager cannot be reached safely.")
         raise SystemExit(1)
-    return lambda: localauth.request_code(expected_server_pid=system.service_state()[1])
+    def code() -> str | None:
+        # Checked again for every code: the port could have changed hands since the window opened.
+        pid = system.service_state()[1]
+        return localauth.request_code(expected_server_pid=pid) if pid and _listener_pid(settings.port()) == pid else None
+
+    return code
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -176,6 +184,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--sync-firewall", action="store_true", help="make the firewall rules match the settings (run as SYSTEM by a task)")
     parser.add_argument("--install-service", action="store_true", help="create or update the service (admin; used by Setup)")
     parser.add_argument("--uninstall-service", action="store_true", help="remove the service, its task and firewall rules (admin)")
+    parser.add_argument("--secure-program-folder", action="store_true", help="limit who may change the program folder (admin; used by Setup)")
     parser.add_argument("--apply-setup", metavar="FILE", help="apply Setup's choices; FILE holds the admin password and is deleted (admin)")
     parser.add_argument("--allow-remote", action="store_true", help="with --apply-setup: let other devices reach the manager")
     parser.add_argument("--register-startup", action="store_true", help="portable: start the manager when Windows starts (admin)")
@@ -207,8 +216,10 @@ def main(argv: list[str] | None = None) -> None:
 
     from . import system
 
-    if args.install_service or args.uninstall_service or args.apply_setup or args.register_startup or args.unregister_startup:
+    if (args.install_service or args.uninstall_service or args.apply_setup or args.register_startup or args.unregister_startup
+            or args.secure_program_folder):
         steps = [
+            (args.secure_program_folder, "secure the program folder", lambda: system.secure_program_folder(str(Path(sys.executable).parent))),
             (args.unregister_startup, "remove the startup task", system.unregister_startup),
             (args.uninstall_service, "stop the game server", lambda: _stop_game_server(url)),
             (args.uninstall_service, "remove the service", system.uninstall_service),
@@ -249,8 +260,16 @@ def main(argv: list[str] | None = None) -> None:
             if not _wait_healthy(url, 30):
                 system.message_box(f"The manager could not start on port {settings.port()}. Is another program using it?")
                 raise SystemExit(1)
-        token_file = settings.data_dir() / "desktop.token"
-        token_provider = lambda: token_file.read_text(encoding="ascii").strip() if token_file.exists() else None  # noqa: E731
+        from ..api.auth import LOCAL_TOKEN
+
+        token_file = settings.data_dir().joinpath(*LOCAL_TOKEN)
+        port = settings.port()
+
+        def token_provider() -> str | None:
+            # Only while this process (the manager it hosts) is what answers on the port.
+            if _listener_pid(port) != os.getpid() or not token_file.exists():
+                return None
+            return token_file.read_text(encoding="ascii").strip()
 
     from .shell import Shell
 

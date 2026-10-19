@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from .. import VsmError, __version__
 from .audit import auditor, changes
-from .auth import COOKIE, SESSION_TTL, same_origin
+from .auth import COOKIE, SESSION_TTL, host_allowed, same_origin
 from ..core.config import SECRET_FIELDS
 from ..core import selfupdate, support
 from ..core.network import local_ip, public_ip
@@ -177,7 +177,8 @@ def steam_branches(m: Manager = Depends(manager)):
 
 
 @router.post("/steam/branches/refresh")
-def steam_branches_refresh(m: Manager = Depends(manager)):
+def steam_branches_refresh(m: Manager = Depends(manager), audit=Depends(auditor)):
+    audit("Refreshed the Steam branch list")
     m.branches.refresh()
     return m.branches.status()
 
@@ -760,7 +761,8 @@ def support_desktop_log(body: DesktopLog, request: Request, m: Manager = Depends
 @public.websocket("/ws")
 async def ws(socket: WebSocket):
     m: Manager = socket.app.state.manager
-    if not same_origin(socket) or not m.auth.authenticated(socket):
+    allowed = host_allowed(socket.headers.get("host", ""), m.config.get().network.allowed_host_names())
+    if not allowed or not same_origin(socket) or not m.auth.authenticated(socket):
         await socket.close(code=4401)
         return
     await socket.accept()
@@ -769,7 +771,12 @@ async def ws(socket: WebSocket):
     try:
         await socket.send_json({"type": "status", "data": m.server.status()})
         while True:
-            await socket.send_json(await queue.get())
+            message = await queue.get()
+            # Signed out, or the password changed since: stop streaming to this socket.
+            if not m.auth.authenticated(socket):
+                await socket.close(code=4401)
+                break
+            await socket.send_json(message)
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:

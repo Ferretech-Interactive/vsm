@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import os
+import re
+import stat
 import struct
 import subprocess
 import sys
@@ -16,6 +19,9 @@ TASK_NAME = "VeinServerManager"  # per-user boot task: portable installs and pre
 FIREWALL_TASK = "VeinServerManager Firewall Sync"
 ADMINISTRATORS_SID = "S-1-5-32-544"
 SYSTEM_SID = "S-1-5-18"
+USERS_SID = "S-1-5-32-545"
+TRUSTED_INSTALLER_SID = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+SERVICE_MARKER = ".vsm-service"  # in the data folder once Setup has made it the service's
 
 _MUTEX = "Local\\VeinServerManagerDesktop"
 _SHOW_EVENT = "Local\\VeinServerManagerShow"
@@ -135,8 +141,80 @@ def stop_service(timeout: int = 60) -> None:
         time.sleep(1)
 
 
+def _is_link(path: str) -> bool:
+    try:
+        return bool(os.lstat(path).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    except (OSError, AttributeError):
+        return False
+
+
+def check_no_links(path: str) -> None:
+    """Refuse a folder that is, or sits under, a junction or symbolic link. Setup changes this folder's
+    permissions as an administrator: through a link that would change some other folder's."""
+    current = os.path.abspath(path)
+    while True:
+        if _is_link(current):
+            raise RuntimeError(f"{current} is a link (junction or symbolic link); choose a normal folder for the data.")
+        parent = os.path.dirname(current)
+        if parent == current:
+            return
+        current = parent
+
+
+def owner_sid(path: str) -> str:
+    """The owner of a file or folder, as a SID string (the link itself, never its target)."""
+    advapi, kernel = ctypes.windll.advapi32, ctypes.windll.kernel32
+    owner, descriptor, text = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_wchar_p()
+    advapi.GetNamedSecurityInfoW.argtypes = [ctypes.c_wchar_p, ctypes.c_int, ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p),
+                                             ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    advapi.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_wchar_p)]
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    error = advapi.GetNamedSecurityInfoW(path, 1, 1, ctypes.byref(owner), None, None, None, ctypes.byref(descriptor))  # file, owner
+    if error:
+        raise OSError(error, f"could not read the owner of {path}")
+    try:
+        if not advapi.ConvertSidToStringSidW(owner, ctypes.byref(text)):
+            raise ctypes.WinError()
+        sid = text.value
+        kernel.LocalFree(text)
+        return sid
+    finally:
+        kernel.LocalFree(descriptor)
+
+
+def current_user_sid() -> str:
+    out = _run([_system32("whoami.exe"), "/user", "/fo", "csv", "/nh"]).stdout
+    match = re.search(r'"(S-1-[0-9-]+)"', out)
+    if not match:
+        raise RuntimeError("could not tell which account is running Setup")
+    return match.group(1)
+
+
+def check_new_data_folder(data_dir: str) -> None:
+    """The first time a folder becomes the service's: it must have been made by an administrator.
+
+    A folder that a standard user created beforehand (empty, or with programs in it the service
+    would later run, or as a link) is refused rather than adopted."""
+    if not os.path.isdir(data_dir) or os.path.exists(os.path.join(data_dir, SERVICE_MARKER)):
+        return
+    trusted = {ADMINISTRATORS_SID, SYSTEM_SID, TRUSTED_INSTALLER_SID, current_user_sid()}
+    if owner_sid(data_dir) not in trusted:
+        raise RuntimeError(f"{data_dir} was created by another account. Choose a new folder, or delete this one first.")
+
+
+def secure_program_folder(app_dir: str) -> None:
+    """The program folder: administrators and SYSTEM change it, everyone else (the service included)
+    only reads and runs it. A folder outside Program Files would otherwise keep a drive root's
+    "users may modify", and the service and the firewall task (SYSTEM) run these files."""
+    check_no_links(app_dir)
+    _run([_system32("icacls.exe"), app_dir, "/inheritance:r", "/grant:r", f"*{ADMINISTRATORS_SID}:(OI)(CI)F",
+          f"*{SYSTEM_SID}:(OI)(CI)F", f"*{USERS_SID}:(OI)(CI)RX", "/T", "/C", "/L", "/Q"])
+
+
 def secure_data_folder(data_dir: str) -> None:
     """Give the data folder to the service account, administrators and SYSTEM only."""
+    check_no_links(data_dir)
+    check_new_data_folder(data_dir)
     icacls = _system32("icacls.exe")
     sid = service_sid(SERVICE_NAME)
     listing = _run([icacls, data_dir], check=False).stdout
@@ -146,8 +224,16 @@ def secure_data_folder(data_dir: str) -> None:
         # per-file permissions. /L acts on links themselves rather than whatever they point at.
         _run([icacls, data_dir, "/setowner", "*" + ADMINISTRATORS_SID, "/T", "/C", "/L", "/Q"], check=False)
         _run([icacls, data_dir, "/reset", "/T", "/C", "/L", "/Q"], check=False)
+    # The service may change what is inside the folder, not the folder itself: without DELETE on it,
+    # it cannot rename the folder away and leave a link in its place for the next Setup to follow.
+    # /L: never through a link, should one appear between the check above and here.
     _run([icacls, data_dir, "/inheritance:r", "/grant:r",
-          f"*{sid}:(OI)(CI)M", f"*{ADMINISTRATORS_SID}:(OI)(CI)F", f"*{SYSTEM_SID}:(OI)(CI)F"])
+          f"*{sid}:(OI)(CI)(IO)M", f"*{ADMINISTRATORS_SID}:(OI)(CI)F", f"*{SYSTEM_SID}:(OI)(CI)F", "/L"])
+    _run([icacls, data_dir, "/grant", f"*{sid}:(RX,WD,AD)", "/L"])
+    marker = os.path.join(data_dir, SERVICE_MARKER)
+    if not os.path.exists(marker):
+        with open(marker, "w", encoding="ascii") as f:
+            f.write("This folder belongs to the Vein Server Manager service.\n")
 
 
 def register_firewall_task(exe: str) -> None:

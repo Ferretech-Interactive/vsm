@@ -38,6 +38,9 @@ _SECRET_PATTERNS = [
      r"\g<k>" + _REMOVED),
 ]
 _IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])")
+_IPV6 = re.compile(r"(?<![\w:.])((?:[0-9A-Fa-f]{1,4}:){2,7}[0-9A-Fa-f]{0,4}(?:::?[0-9A-Fa-f]{1,4})*)(?![\w:.])")
+# Unreal writes the Windows user and computer name near the top of its log.
+_WHO_LINES = re.compile(r"(?im)^((?:\[[^\]]*\]){0,2}LogInit: (?:User|Computer|UserDir|User Name|Machine Name)\s*[:=]\s*).*$")
 _STEAM_ID = re.compile(r"(?<!\d)7656119\d{10}(?!\d)")
 _USER_DIR = re.compile(r"(?i)([\\/](?:Users|home)[\\/])([^\\/\s\"']+)")
 _KEEP_USERS = {"public", "default", "all users", "<user>"}
@@ -50,7 +53,7 @@ class Scrubber:
     def __init__(self, secrets: list[str], anonymize: bool, names: list[str] | None = None):
         # Literal secret values first, longest first, so a password that does not look like one
         # (no "password=" in front of it) is still caught wherever it was echoed.
-        self.secrets = sorted({s for s in secrets if s and len(s) >= 4 and s != "********"}, key=len, reverse=True)
+        self.secrets = sorted({s for s in secrets if s and len(s) >= 3 and s != "********"}, key=len, reverse=True)
         self.anonymize = anonymize
         self.names = sorted({n for n in (names or []) if n and len(n) >= 3}, key=len, reverse=True)
         self._seen: dict[str, str] = {}
@@ -65,7 +68,7 @@ class Scrubber:
     def _ip(self, match: re.Match) -> str:
         text = match.group(1)
         try:
-            address = ipaddress.IPv4Address(text)
+            address = ipaddress.ip_address(text)
         except ValueError:
             return text  # a version number or the like
         if not address.is_global:
@@ -80,6 +83,8 @@ class Scrubber:
         if self.anonymize:
             text = _STEAM_ID.sub(lambda m: self._placeholder("steamid", m.group(0)), text)
             text = _IPV4.sub(self._ip, text)
+            text = _IPV6.sub(self._ip, text)
+            text = _WHO_LINES.sub(lambda m: m.group(1) + "<removed>", text)
             for name in self.names:
                 text = re.sub(rf"(?<![\w]){re.escape(name)}(?![\w])", lambda m, n=name: self._placeholder("player", n), text)
             text = _USER_DIR.sub(lambda m: m.group(1) + (m.group(2) if m.group(2).lower() in _KEEP_USERS else "<user>"), text)

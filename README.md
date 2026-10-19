@@ -50,6 +50,26 @@ browser on another machine.
   chat-to-Discord relay, REST API.
 - **Linux and Docker** are supported as a secondary option; see [Linux and Docker](#linux-and-docker).
 
+## Contents
+
+- [Screenshots](#screenshots)
+- [Install on Windows](#install-on-windows)
+  - [How it runs](#how-it-runs) · [Guided setup](#guided-setup) · [Checking port forwarding](#checking-port-forwarding-optional) · [Other servers](#other-servers)
+  - [Deploying to a Linux server from the app](#deploying-to-a-linux-server-from-the-app) · [Updates](#updates) · [Health check](#health-check)
+  - [Reporting a problem](#reporting-a-problem) · [Mods](#mods) · [Unattended install](#unattended-install)
+- [Linux and Docker](#linux-and-docker)
+  - [Supported Linux versions](#supported-linux-versions)
+- [Settings](#settings)
+  - [Where things are stored](#where-things-are-stored)
+- [Security](#security)
+- [REST API](#rest-api)
+- [Development](#development)
+  - [Releases](#releases)
+- [Differences from the original desktop app](#differences-from-the-original-desktop-app)
+- [Planned](#planned)
+- [Credits](#credits)
+- [Disclaimer](#disclaimer)
+
 ## Screenshots
 
 <table>
@@ -395,8 +415,21 @@ The manager can start processes and replace files on the host, so treat access t
   it only over loopback. Sandboxed programs and non-administrators are refused. Requests that
   arrive through a reverse proxy are never treated as local.
 - **Desktop window (portable)**: it signs in with a token only your Windows account can read.
+  Unzip the portable build inside your own user folder, not at the root of a drive, where other
+  accounts on the PC may be able to change files.
 - **Service account**: the manager and game server run without the usual service privileges, and
   the firewall helper (which runs as SYSTEM) can only set three fixed rules from validated settings.
+  Only administrators can change the program folder, wherever it is installed. The service may
+  change what is inside its data folder but not the folder itself. Setup refuses a data folder that
+  is a link, or that another account created beforehand.
+- **Only its own addresses**: the manager answers to IP addresses, `localhost` and this computer's
+  name. Any other name (as used by a web page that points its own domain at your PC, "DNS
+  rebinding") is refused unless you add it under **System > Manage from other devices** or
+  `VSM_ALLOWED_HOSTS`. `X-Forwarded-For` is ignored unless `VSM_TRUSTED_PROXIES` names your
+  reverse proxy. An API token shorter than 32 characters is ignored.
+- **The game server and SteamCMD** do not inherit the manager's passwords or tokens from its
+  environment. Lines players can write (chat, their names) are never read as log events such as
+  a join or the end of a save.
 - **Audit trail**: every sign-in (and failed attempt), sign-out, password change and change made
   through the manager is recorded with who did it (the desktop window, an IP address, or the API
   token) under **System > Event log**, in `logs/manager.log` and on its own in `logs/audit.log`.
@@ -404,9 +437,14 @@ The manager can start processes and replace files on the host, so treat access t
 - **Deploying over SSH**: the SSH and sudo passwords and any key passphrase are held in memory for
   one installation and never written, logged or put on a command line (sudo reads its password
   from standard input). The server's host key is shown before sign-in and remembered; if it ever
-  differs, the app refuses to connect rather than asking again. For later connections the app
-  makes a key of its own, kept encrypted for your Windows account (DPAPI); on the server that key
-  belongs to an account that can do one thing only, forward a connection to the manager's port.
+  differs, the app refuses to connect rather than asking again (remove the server from the list
+  first if you reinstalled it). For later connections the app makes a key of its own, kept
+  encrypted for your Windows account (DPAPI); on the server that key belongs to an account that can
+  do one thing only, forward a connection to the manager's port (also enforced in sshd's settings
+  where the server reads `sshd_config.d`).
+- **Native Linux install**: the program files belong to root; the service account owns only the
+  data folder, and the systemd unit is hardened (no new privileges, read-only system folders,
+  private `/tmp`).
   Any program running on your Windows PC can reach the tunnel's local port while it is open; it
   still needs the admin password. The SSH support uses the paramiko and cryptography libraries.
 - **Port check** contacts an outside service only when you press its button, and tells it only
@@ -432,8 +470,16 @@ The manager can start processes and replace files on the host, so treat access t
   SameSite=Strict cookies, logins are rate-limited and cross-origin requests are refused.
 - `config.json` contains the Discord bot token and RCON password in clear text, and `Game.ini`
   the game's chat webhook addresses; the API never returns them.
-- The Discord bot accepts `!stop` / `!restart` from anyone who can post in the configured channel.
-  Use a staff-only channel.
+- The Discord bot runs `!start`, `!stop`, `!restart` and `!backup` only for members who can manage
+  the Discord server or have a role listed under **Integrations**; `!backup` at most every 10
+  minutes. Each command is in the audit trail with the Discord user. Player names and chat are
+  posted to Discord as plain text.
+- The RCON password, when RCON is on, is passed to the game server on its command line, which other
+  accounts on the same machine can read (on Linux through `/proc`).
+- UE4SS is downloaded from its project's moving `experimental-latest` release; what is installed is
+  whatever that release holds at the time.
+- The diagnostics zip (**System > Report a problem**) contains the end of the game log, which includes
+  player chat.
 - The game's own HTTP API (`HTTPPort`) has no authentication. Do not publish that port.
 
 ## REST API

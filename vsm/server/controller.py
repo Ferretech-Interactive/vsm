@@ -16,19 +16,27 @@ from enum import Enum
 import psutil
 
 from .. import VsmError, __version__
-from ..core.network import clean_dll_search
+from ..core.network import clean_dll_search, child_env
+from ..integrations.discord_bot import discord_safe
 from ..core.paths import IS_WINDOWS
 from .usage import Usage
 
 log = logging.getLogger("vsm.server")
 
-SAVE_START = "LogVeinSaveGame: Saving all objects"
-SAVE_FINISH = ("LogVeinSaveGame: Saved to slot Server", "LogVeinSaveGame: Saved autosave game to disk")
-READY_MARKERS = ("LogRamjetNetworking: Heartbeating", "SDR RelayNetworkStatus: avail=OK")
+# Unreal log lines are "[time][frame]LogCategory: message". Markers are matched against the
+# category and the start of the message, never anywhere in the line: players write some of these
+# lines themselves (chat, their own names), and must not be able to fake a join, a leave or the end
+# of a save that way.
+RE_LINE = re.compile(r"^(?:\[[^\]]*\]){0,2}(\w+):\s?(.*)$")
+SAVE_START = ("LogVeinSaveGame", "Saving all objects")
+SAVE_FINISH = (("LogVeinSaveGame", "Saved to slot Server"), ("LogVeinSaveGame", "Saved autosave game to disk"))
+READY_MARKERS = (("LogRamjetNetworking", "Heartbeating"),)
+READY_ANYWHERE = "SDR RelayNetworkStatus: avail=OK"  # Steam's own line; its category varies
 RE_JOIN = re.compile(r"Name=(.*?)\?.*ID=(\d+)")
 RE_LEAVE = re.compile(r"Ended auth session for ID (\d+)")
-RE_CHAT = re.compile(r"LogVeinChat: \[.*?\] (.*?): (.*)")
-RE_KILL = re.compile(r"LogVein: Display: (.*?) killed (.*)")
+RE_CHAT = re.compile(r"^\[.*?\] (.*?): (.*)")
+RE_KILL = re.compile(r"^Display: (.*?) killed (.*)")
+CHAT = "LogVeinChat"
 
 STARTING_TIMEOUT = 120  # considered online after this even if the ready marker never shows
 SAVE_WAIT = 60
@@ -276,30 +284,36 @@ class ServerController:
         if not line:
             return
         self.m.hub.publish("log", line)
-        if not self.ready and any(marker in line for marker in READY_MARKERS):
+        parsed = RE_LINE.match(line)
+        category, text = parsed.groups() if parsed else ("", line)
+        if category == CHAT:
+            # Chat is relayed and nothing else: whatever a player types, it is never read as a log event.
+            if m := RE_CHAT.match(text):
+                self.m.discord.chat(f"💬 **{discord_safe(m.group(1))}**: {discord_safe(m.group(2))}", 3447003)
+            return
+        if not self.ready and (any(category == c and text.startswith(s) for c, s in READY_MARKERS) or READY_ANYWHERE in line):
             self.ready = True
-        if SAVE_START in line:
+        if category == SAVE_START[0] and text.startswith(SAVE_START[1]):
             self.save_active = True
-        elif any(s in line for s in SAVE_FINISH):
+        elif any(category == c and text.startswith(s) for c, s in SAVE_FINISH):
             self.save_active = False
 
-        if m := RE_JOIN.search(line):
+        if category == "LogVein" and (m := RE_KILL.match(text)):
+            # Before join/leave: the names in a kill line are the players' own text.
+            self.m.discord.chat(f"💀 **{discord_safe(m.group(2))}** was killed by **{discord_safe(m.group(1))}**", 15158332)
+        elif m := RE_JOIN.search(text):
             name, sid = m.group(1), m.group(2)
             if sid not in self.sessions:
                 self.sessions[sid] = name
                 self.ready = True
                 self.m.history.seen(sid, name)
                 self.m.event("PLAYER", f"{name} joined.")
-                self.m.discord.chat(f"🟢 **{name}** has joined the server. (Players: {len(self.sessions)})", 3066993)
-        elif m := RE_LEAVE.search(line):
+                self.m.discord.chat(f"🟢 **{discord_safe(name)}** has joined the server. (Players: {len(self.sessions)})", 3066993)
+        elif m := RE_LEAVE.search(text):
             name = self.sessions.pop(m.group(1), None)
             if name:
                 self.m.event("PLAYER", f"{name} left.")
-                self.m.discord.chat(f"🔴 **{name}** has disconnected. (Players: {len(self.sessions)})", 15158332)
-        elif m := RE_CHAT.search(line):
-            self.m.discord.chat(f"💬 **{m.group(1)}**: {m.group(2)}", 3447003)
-        elif m := RE_KILL.search(line):
-            self.m.discord.chat(f"💀 **{m.group(2)}** was killed by **{m.group(1)}**", 15158332)
+                self.m.discord.chat(f"🔴 **{discord_safe(name)}** has disconnected. (Players: {len(self.sessions)})", 15158332)
 
     # ---------- operations (run on a worker thread, one at a time) ----------
 
@@ -376,7 +390,8 @@ class ServerController:
         self.sessions.clear()
         with clean_dll_search():
             self.proc = subprocess.Popen(
-                cmd, cwd=paths.server, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **extra
+                cmd, cwd=paths.server, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env=child_env(), **extra
             )
         self.pid = self.proc.pid
         self.started_at = time.time()

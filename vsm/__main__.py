@@ -17,8 +17,10 @@ def build_server() -> uvicorn.Server:
         app,
         host=os.environ.get("VSM_HOST") or ("0.0.0.0" if remote else "127.0.0.1"),
         port=int(os.environ.get("VSM_PORT", "8810")),
-        proxy_headers=True,
-        forwarded_allow_ips=os.environ.get("VSM_TRUSTED_PROXIES", "127.0.0.1"),
+        # Only behind a reverse proxy the admin names: otherwise anything that reaches the manager over
+        # loopback (an SSH tunnel, another local user) could pick its own address for the login lockout.
+        proxy_headers=bool(os.environ.get("VSM_TRUSTED_PROXIES")),
+        forwarded_allow_ips=os.environ.get("VSM_TRUSTED_PROXIES") or None,
         timeout_graceful_shutdown=5,
         log_level="warning",
         log_config=None,  # keep the manager's own logging setup (and work without a console)

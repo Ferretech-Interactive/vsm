@@ -4,7 +4,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import threading
+import time
 import urllib.request
 from datetime import datetime, timezone
 
@@ -19,6 +21,24 @@ except ImportError:
     discord = None
 
 COLORS = {"START": 5763719, "STOP": 15548997, "CRASH": 15158332, "UPDATE": 3447003, "WARN": 16776960}
+CONTROL = ("!start", "!stop", "!restart", "!backup")
+BACKUP_COOLDOWN = 600  # seconds between backups asked for from Discord: each one counts against retention
+_MARKDOWN = re.compile(r"([\\*_~`|>\[\]()#-])")
+
+
+def discord_safe(text: str, limit: int = 300) -> str:
+    """Player-written text (names, chat) as plain text in a Discord message: markdown escaped,
+    so a name cannot become a disguised link, and mentions defused."""
+    text = _MARKDOWN.sub(r"\\\1", str(text)[:limit])
+    return text.replace("@", "@\u200b")
+
+
+def may_control(author, roles: set[int]) -> bool:
+    """Start, stop, restart and backup: members who may manage the Discord server, or with a listed role."""
+    perms = getattr(author, "guild_permissions", None)
+    if perms is not None and (perms.administrator or perms.manage_guild):
+        return True
+    return any(getattr(role, "id", None) in roles for role in getattr(author, "roles", ()))
 
 
 class Discord:
@@ -32,7 +52,7 @@ class Discord:
         if not (cfg.webhook_enabled and cfg.webhook_url):
             return
         embed["timestamp"] = datetime.now(timezone.utc).isoformat()
-        body = json.dumps({"embeds": [embed]}).encode()
+        body = json.dumps({"embeds": [embed], "allowed_mentions": {"parse": []}}).encode()
 
         def send():
             try:
@@ -83,7 +103,7 @@ class Discord:
         hours, rem = divmod(s["uptime"], 3600)
         embed.add_field(name="Uptime", value=f"{hours}h {rem // 60}m" if s["pid"] else "N/A", inline=True)
         embed.add_field(name="RAM Usage", value=f"{s['ram_mb']} MB", inline=True)
-        names = "\n".join(f"• {p['name']}" for p in s["players"])
+        names = "\n".join(f"• {discord_safe(p['name'], 64)}" for p in s["players"])
         if len(names) > 1000:
             names = names[:900] + "\n...and more"
         embed.add_field(name=f"Online Players ({len(s['players'])})", value=names or "No players online.", inline=False)
@@ -98,7 +118,8 @@ def _build_bot(integration: Discord):
     intents = discord.Intents.default()
     intents.message_content = True
     client = discord.Client(intents=intents)
-    state = {"message_id": int(cfg.live_status_message_id) if cfg.live_status_message_id else None, "loop": False}
+    state = {"message_id": int(cfg.live_status_message_id) if cfg.live_status_message_id else None, "loop": False, "backup": 0.0}
+    roles = cfg.command_role_ids()
 
     async def update_board():
         channel = client.get_channel(channel_id)
@@ -137,10 +158,25 @@ def _build_bot(integration: Discord):
 
     @client.event
     async def on_message(message):
-        # Commands are only honoured in the configured channel.
+        # Commands are only honoured in the configured channel, from people (not bots or webhooks).
         if message.author == client.user or not channel_id or message.channel.id != channel_id:
             return
+        if getattr(message.author, "bot", False) or getattr(message, "webhook_id", None):
+            return
         command = message.content.lower().strip()
+        if command in CONTROL:
+            who = f"Discord user {message.author} ({message.author.id})"
+            if not may_control(message.author, roles):
+                m.audit(f"Refused {command} from Discord: no permission", who)
+                await message.channel.send("⛔ Only members who can manage this Discord server, or have a role set in the manager, may do that.")
+                return
+            if command == "!backup":
+                wait = state["backup"] + BACKUP_COOLDOWN - time.time()
+                if wait > 0:
+                    await message.channel.send(f"⏳ A backup was made from Discord recently. Try again in {int(wait // 60) + 1} min.")
+                    return
+                state["backup"] = time.time()
+            m.audit(f"{command} from Discord", who)
         actions = {
             "!start": ("🚀 **Start command received.** Launching server...", lambda: m.server.request_start("DISCORD")),
             "!stop": ("🛑 **Stop command received.** Shutting down...", lambda: m.server.request_stop("DISCORD")),

@@ -28,6 +28,8 @@ PROTECTED_SECTIONS = {
 _STEAM_ID = re.compile(r"^\d{17}$")
 _NUMBER = re.compile(r"^-?\d+(\.\d+)?$")
 _PASSWORD = re.compile(r"^[A-Za-z0-9_\-]{0,64}$")
+# Line breaks of every kind and other control characters, replaced by a space in free text.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 _DISCORD_WEBHOOK = re.compile(r"^https://((ptb|canary)\.)?discord(app)?\.com/api/webhooks/[A-Za-z0-9/_\-]{1,200}$")
 # The game forwards global chat, and admin reports, to these itself.
 DISCORD_KEYS = {"discord_chat_webhook": "DiscordChatWebhookURL", "discord_admin_webhook": "DiscordChatAdminWebhookURL"}
@@ -71,9 +73,9 @@ class GameSettings:
         """Check and normalise the fields present in `data`; raises VsmError naming the problem."""
         clean: dict = {}
         if "server_name" in data:
-            clean["server_name"] = str(data["server_name"]).strip()[:128] or "Vein Server"
+            clean["server_name"] = _CONTROL.sub(" ", str(data["server_name"])).strip()[:128] or "Vein Server"
         if "description" in data:
-            clean["description"] = str(data["description"]).strip()[:512]
+            clean["description"] = _CONTROL.sub(" ", str(data["description"])).strip()[:512]
         if "password" in data:
             clean["password"] = str(data["password"])
             if not _PASSWORD.match(clean["password"]):

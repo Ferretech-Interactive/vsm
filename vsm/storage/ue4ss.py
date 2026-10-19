@@ -245,7 +245,10 @@ class Ue4ss:
         except OSError:
             return
         for key, value in values.items():
-            text = re.sub(rf"(?mi)^({re.escape(key)}[ \t]*=)[^\r\n]*$", rf"\g<1> {value}", text)
+            value = str(value)
+            if not re.fullmatch(r"[\w.]+", value):  # also comes from the downloaded game config
+                raise VsmError(f"Unexpected value for {key} in the UE4SS settings.")
+            text = re.sub(rf"(?mi)^({re.escape(key)}[ \t]*=)[^\r\n]*$", lambda m, v=value: f"{m.group(1)} {v}", text)
         path.write_text(text, encoding="utf-8")
 
     def set_enabled(self, enabled: bool) -> dict:

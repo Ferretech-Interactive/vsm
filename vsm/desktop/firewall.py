@@ -52,6 +52,46 @@ class Rule:
     profiles: str = "any"  # netsh profile list
 
 
+def _read_no_follow(path: Path) -> bytes:
+    """Read `path` as SYSTEM without being redirected: no link is followed (FILE_FLAG_OPEN_REPARSE_POINT),
+    the handle must really be a file in the expected folder (a link higher up the path is caught by
+    comparing the final path), and a named pipe at that name could only identify us, not act as us."""
+    if os.name != "nt":
+        with open(path, "rb") as f:
+            return f.read(MAX_FILE_BYTES + 1)
+    import msvcrt
+
+    GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING = 0x80000000, 0x1, 3
+    FLAGS = 0x00200000 | 0x00100000 | 0x00010000  # OPEN_REPARSE_POINT | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION
+    kernel = ctypes.windll.kernel32
+    kernel.CreateFileW.restype = ctypes.c_void_p
+    kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+                                   ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+    kernel.GetFinalPathNameByHandleW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32]
+    kernel.GetFileType.argtypes = [ctypes.c_void_p]
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    handle = kernel.CreateFileW(str(path), GENERIC_READ, FILE_SHARE_READ, None, OPEN_EXISTING, FLAGS, None)
+    if handle in (None, ctypes.c_void_p(-1).value):
+        raise OSError(ctypes.get_last_error() or "open failed", "cannot open")
+    try:
+        if kernel.GetFileType(handle) != 1:  # FILE_TYPE_DISK: not a pipe or device
+            raise OSError("not a file")
+        buffer = ctypes.create_unicode_buffer(1024)
+        if not kernel.GetFinalPathNameByHandleW(handle, buffer, 1024, 0):
+            raise OSError("cannot tell where the file is")
+        final = buffer.value.removeprefix("\\\\?\\")
+        expected = os.path.abspath(path.parent)  # not resolved: a link anywhere on the way makes these differ
+        if os.path.normcase(os.path.dirname(final)) != os.path.normcase(expected):
+            raise OSError("the file is not where it should be")
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+        handle = None  # now owned by fd
+        with os.fdopen(fd, "rb") as f:
+            return f.read(MAX_FILE_BYTES + 1)
+    finally:
+        if handle is not None:
+            kernel.CloseHandle(handle)
+
+
 def _read_json(path: Path) -> dict:
     """Read a small JSON object, refusing links and anything that is not a plain file."""
     try:
@@ -63,8 +103,7 @@ def _read_json(path: Path) -> dict:
     if info.st_size > MAX_FILE_BYTES:
         raise FirewallError(f"{path.name} is too large")
     try:
-        with open(path, "rb") as f:
-            raw = f.read(MAX_FILE_BYTES + 1)
+        raw = _read_no_follow(path)
         data = json.loads(raw.decode("utf-8-sig"))
     except (OSError, ValueError) as e:
         raise FirewallError(f"cannot parse {path.name}: {e}")

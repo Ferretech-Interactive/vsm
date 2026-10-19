@@ -375,6 +375,8 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep <> ssPostInstall then
     exit;
+  { Before anything runs from it: a folder outside Program Files would let any user replace the program. }
+  RunHelper('--secure-program-folder', 'secure the program folder');
   if IsHost then
   begin
     if RunHelper('--install-service', 'set up the Vein Server Manager service') and not IsUpdate then

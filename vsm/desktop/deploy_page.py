@@ -52,7 +52,7 @@ DEPLOY_HTML = """<!doctype html>
   <section id="s-key">
     <p>The server at <b id="k-server"></b> identifies itself with this key. Compare the fingerprint with the server's own (on the server: <span class="mono">ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</span>) if someone could be in between.</p>
     <div class="box"><div class="note" id="k-type"></div><div class="mono" id="k-print"></div></div>
-    <div class="box bad" id="k-changed" style="display:none">This is NOT the key saved for this server when it was deployed. That happens when a server is reinstalled, and when something is impersonating it. Continue only if you know why it changed.</div>
+    <div class="box bad" id="k-changed" style="display:none">This is NOT the key saved for this server when it was deployed. That happens when a server is reinstalled, and when something is impersonating it. Nothing more is sent to it. If you reinstalled the server, remove it under Servers first, then deploy again.</div>
     <div class="note" id="k-known" style="display:none">This matches the key saved for this server.</div>
     <div class="buttons"><button id="back1">Back</button><button class="primary" id="trust">This is my server</button></div>
   </section>
@@ -116,6 +116,7 @@ DEPLOY_HTML = """<!doctype html>
       if (fail(r)) return;
       $('k-server').textContent = r.server; $('k-type').textContent = r.type; $('k-print').textContent = r.fingerprint;
       $('k-changed').style.display = r.changed ? '' : 'none'; $('k-known').style.display = r.known ? '' : 'none';
+      $('trust').style.display = r.changed ? 'none' : '';
       document.querySelectorAll('.who').forEach((e) => e.textContent = r.server);
       if (!$('name').value) $('name').value = $('host').value;
       step('key');

@@ -7,9 +7,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
+import logging
 import os
+import re
 import secrets
+import socket
 import subprocess
 import threading
 import time
@@ -29,6 +33,11 @@ LOOPBACK = {"127.0.0.1", "::1"}
 LOCAL_CODE_TTL = 30
 MAX_LOCAL_CODES = 64
 FORWARDING_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip")
+MIN_API_TOKEN = 32
+# The portable app's sign-in token, in a folder only this Windows user can open (`enable_local_login`).
+LOCAL_TOKEN = ("desktop-auth", "desktop.token")
+
+log = logging.getLogger("vsm.auth")
 
 
 def _hash(password: str, salt: bytes) -> bytes:
@@ -39,6 +48,9 @@ class Auth:
     def __init__(self, path: Path):
         self.path = path
         self.api_token = os.environ.get("VSM_API_TOKEN") or None
+        if self.api_token and len(self.api_token) < MIN_API_TOKEN:
+            log.warning("VSM_API_TOKEN is shorter than %d characters and is ignored.", MIN_API_TOKEN)
+            self.api_token = None
         self._sessions: dict[str, float] = {}
         self._local_sessions: set[str] = set()
         self._local_token: str | None = None
@@ -133,19 +145,41 @@ class Auth:
             self._local_sessions.add(self._key(token))
         return token
 
+    @staticmethod
+    def _bucket(ip: str) -> str:
+        """Failures are counted per IPv4 address and per IPv6 /64: one machine usually owns a whole /64."""
+        try:
+            address = ipaddress.ip_address(ip)
+        except ValueError:
+            return ip
+        if address.version == 6:
+            if address.ipv4_mapped:
+                return str(address.ipv4_mapped)
+            return str(ipaddress.ip_network(f"{address}/64", strict=False))
+        return str(address)
+
+    def _recent_failures(self, ip: str) -> list[float]:
+        now = time.time()
+        # Forget old entries, so addresses that come and go cannot grow this without limit.
+        self._failures = {k: kept for k, v in self._failures.items() if (kept := [t for t in v if now - t < LOCKOUT])}
+        return self._failures.get(self._bucket(ip), [])
+
     def _check_lockout(self, ip: str) -> list[float]:
-        recent = [t for t in self._failures.get(ip, []) if time.time() - t < LOCKOUT]
+        recent = self._recent_failures(ip)
         if len(recent) >= MAX_FAILURES:
             raise VsmError("Too many failed attempts. Try again in a few minutes.", 429)
         return recent
+
+    def _fail(self, ip: str, recent: list[float]) -> None:
+        self._failures[self._bucket(ip)] = recent + [time.time()]
 
     def login(self, ip: str, password: str) -> str:
         with self._lock:
             recent = self._check_lockout(ip)
             if not self.verify(password):
-                self._failures[ip] = recent + [time.time()]
+                self._fail(ip, recent)
                 raise VsmError("Incorrect password.", 401)
-            self._failures.pop(ip, None)
+            self._failures.pop(self._bucket(ip), None)
             return self._new_session()
 
     def logout(self, token: str | None) -> None:
@@ -159,24 +193,43 @@ class Auth:
             return True
         header = conn.headers.get("authorization", "")
         if self.api_token and header.startswith("Bearer "):
-            return hmac.compare_digest(header[7:].encode(), self.api_token.encode())
+            ip = conn.client.host if conn.client else ""
+            with self._lock:
+                # A wrong token counts like a wrong password, so the token cannot be guessed either.
+                recent = self._recent_failures(ip)
+                if len(recent) >= MAX_FAILURES:
+                    return False
+                if hmac.compare_digest(header[7:].encode(), self.api_token.encode()):
+                    return True
+                self._fail(ip, recent)
         return False
 
     # ---------- desktop app sign-in ----------
 
     def enable_local_login(self, token_file: Path) -> None:
-        """Write a fresh token only this OS user can read; the desktop window trades it for a session."""
-        self._local_token = secrets.token_urlsafe(32)
-        token_file.unlink(missing_ok=True)
-        token_file.touch(mode=0o600)
-        if os.name == "nt":
-            # Drop inherited ACLs so other accounts on the machine cannot read it.
-            user = "\\".join(p for p in (os.environ.get("USERDOMAIN"), os.environ.get("USERNAME")) if p)
-            subprocess.run(
-                ["icacls", str(token_file), "/inheritance:r", "/grant:r", f"{user}:F"],
-                capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-        token_file.write_text(self._local_token, encoding="ascii")
+        """Write a fresh token only this OS user can read; the desktop window trades it for a session.
+
+        The token goes into a folder that is made private first, so the file is private from the
+        moment it exists (restricting the file after creating it leaves a moment in which another
+        account could open it). If the folder cannot be made private, local sign-in stays off and
+        the window asks for the password instead."""
+        folder = token_file.parent
+        try:
+            folder.mkdir(mode=0o700, exist_ok=True)
+            if os.name == "nt":
+                _private_folder_windows(folder)
+            else:
+                os.chmod(folder, 0o700)
+            for old in folder.iterdir():
+                old.unlink(missing_ok=True)
+            token = secrets.token_urlsafe(32)
+            fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="ascii") as f:
+                f.write(token)
+        except OSError as e:
+            log.error("Local sign-in is off: its token could not be stored privately (%s).", e)
+            return
+        self._local_token = token
 
     def enable_local_codes(self) -> None:
         """Service mode: accept one-time codes handed out over the administrator pipe."""
@@ -233,6 +286,60 @@ class Auth:
             # Sign out everyone else; the caller keeps their session.
             self._sessions = {k: v for k, v in self._sessions.items() if k == key}
             self._local_sessions &= self._sessions.keys()
+
+
+def _private_folder_windows(folder: Path) -> None:
+    """Only the current Windows user, SYSTEM and administrators may open `folder`. Raises OSError otherwise."""
+    system32 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
+    flags = {"capture_output": True, "text": True, "creationflags": subprocess.CREATE_NO_WINDOW}
+    out = subprocess.run([str(system32 / "whoami.exe"), "/user", "/fo", "csv", "/nh"], **flags).stdout
+    sid = re.search(r'"(S-1-[0-9-]+)"', out or "")
+    if not sid:
+        raise OSError("could not tell who the current user is")
+    result = subprocess.run(
+        [str(system32 / "icacls.exe"), str(folder), "/inheritance:r", "/grant:r",
+         f"*{sid.group(1)}:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/L", "/Q"], **flags)
+    if result.returncode != 0:
+        raise OSError(f"icacls failed: {(result.stderr or result.stdout).strip()}")
+
+
+def host_names() -> set[str]:
+    """This machine's own names, which a browser may legitimately use to reach the manager."""
+    names = {"localhost"}
+    try:
+        host = socket.gethostname().lower()
+        names |= {host, f"{host}.local", socket.getfqdn().lower()}
+    except OSError:
+        pass
+    return {n for n in names if n}
+
+
+def _is_ip(text: str) -> bool:
+    try:
+        ipaddress.ip_address(text)
+        return True
+    except ValueError:
+        return False
+
+
+def host_allowed(host_header: str, extra: set[str] | frozenset[str] = frozenset()) -> bool:
+    """Is `host_header` a name this manager answers to?
+
+    Checked on every request against DNS rebinding: a web page can point its own domain at
+    127.0.0.1, after which the browser treats the manager as that site and lets the page use the
+    API. An IP address cannot be re-pointed, so any IP is fine; a name must be this machine's own,
+    *.localhost (the desktop app's tunnels), or listed in network.allowed_hosts."""
+    host = (host_header or "").strip().lower()
+    if not host:
+        return False
+    if host.startswith("["):  # [IPv6]:port
+        end = host.find("]")
+        return end > 0 and _is_ip(host[1:end])
+    name = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    if _is_ip(name):
+        return True
+    name = name.rstrip(".")
+    return name == "localhost" or name.endswith(".localhost") or name in host_names() or name in extra
 
 
 def same_origin(conn: Request | WebSocket) -> bool:

@@ -154,6 +154,9 @@ class ServerList:
                               "host_key": host_key, "remote_port": remote_port, "local_port": local_port})
         for entry in self._servers:
             if entry.get("kind") == "ssh" and entry["host"] == host and entry["ssh_port"] == ssh_port:
+                if entry.get("host_key") != fields["host_key"]:
+                    # The pinned key is only ever replaced by forgetting the server and deploying again.
+                    raise ServerError("This server's key changed; remove it under Servers first.")
                 entry.update(fields, id=entry["id"], local_port=entry["local_port"])  # same origin as before
                 self._save()
                 return dict(entry)

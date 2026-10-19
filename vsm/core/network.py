@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
+import re
 import socket
 import sys
 import threading
@@ -43,6 +45,16 @@ def local_ip() -> str:
         return UNKNOWN
     finally:
         probe.close()
+
+
+# Environment variables a child process must not see: the game server and SteamCMD (and every
+# UE4SS mod the game loads) run third-party code, and these hold the manager's own secrets.
+_SECRET_ENV = re.compile(r"^VSM_(?:.*PASSWORD.*|API_TOKEN|DISCORD_.*)$", re.IGNORECASE)
+
+
+def child_env() -> dict[str, str]:
+    """This process's environment without the manager's secrets, for the game server and SteamCMD."""
+    return {k: v for k, v in os.environ.items() if not _SECRET_ENV.match(k)}
 
 
 @contextlib.contextmanager

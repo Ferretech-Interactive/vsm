@@ -106,7 +106,7 @@ def test_desktop_log_is_included_when_handed_over(tmp_path, monkeypatch):
     from vsm.app import create_app
 
     with TestClient(create_app(), client=("127.0.0.1", 50000)) as c:
-        token = (tmp_path / "desktop.token").read_text()
+        token = (tmp_path / "desktop-auth" / "desktop.token").read_text()
         assert c.post("/api/auth/local", json={"token": token}).status_code == 200
         monkeypatch.setattr("vsm.api.routes.public_ip", lambda: "unknown")
         assert c.post("/api/support/desktop-log", json={"text": f"window opened, webhook {WEBHOOK}"}).status_code == 200

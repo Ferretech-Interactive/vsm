@@ -26,6 +26,7 @@ from ..core.updates import RELEASES_API, REPO_URL, is_prerelease, parse
 log = logging.getLogger("vsm.desktop")
 
 PUBLISHER = "FerreTech Interactive LLC"  # the code-signing certificate's common name
+ISSUER = "Certum"  # start of the common name of the authority that issues it
 DOWNLOAD_PREFIX = REPO_URL + "/releases/download/"
 SETUP_NAME = re.compile(r"^VSM [0-9A-Za-z.\-]{1,32} Setup\.exe$")
 MAX_SETUP_BYTES = 400 * 1024 * 1024
@@ -118,30 +119,34 @@ def common_name(subject: str) -> str:
     return (m.group(2) if m.group(2) is not None else m.group(1)).strip()
 
 
-def is_trusted(status: str, subject: str) -> bool:
-    """A file may be installed only when Windows says its signature is valid and it names our publisher."""
-    return status == "Valid" and common_name(subject) == PUBLISHER
+def is_trusted(status: str, subject: str, issuer: str) -> bool:
+    """A file may be installed only when Windows says its signature is valid, it names our publisher, and
+    the certificate is from the authority that issues ours (another CA's certificate in our name is refused)."""
+    return status == "Valid" and common_name(subject) == PUBLISHER and common_name(issuer).startswith(ISSUER)
 
 
-def signature(path: Path) -> tuple[str, str]:
-    """(status, signer subject) as Windows sees the file: 'Valid' means an intact file and a trusted chain."""
+def signature(path: Path) -> tuple[str, str, str]:
+    """(status, signer subject, its issuer) as Windows sees the file: 'Valid' means an intact file and a trusted chain."""
     system = ctypes.create_unicode_buffer(260)
     ctypes.windll.kernel32.GetSystemDirectoryW(system, 260)
     script = (
         "$s = Get-AuthenticodeSignature -LiteralPath $env:VSM_VERIFY_FILE;"
-        "[Console]::Out.Write($s.Status.ToString() + \"`n\" + $(if ($s.SignerCertificate) { $s.SignerCertificate.Subject }))"
+        "$c = $s.SignerCertificate;"
+        "[Console]::Out.Write($s.Status.ToString() + \"`n\" + $(if ($c) { $c.Subject }) + \"`n\" + $(if ($c) { $c.Issuer }))"
     )
+    modules = os.path.join(system.value, r"WindowsPowerShell\v1.0\Modules")
     try:
         result = subprocess.run(
             [os.path.join(system.value, r"WindowsPowerShell\v1.0\powershell.exe"), "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True, text=True, timeout=120, creationflags=subprocess.CREATE_NO_WINDOW,
-            env={**os.environ, "VSM_VERIFY_FILE": str(path)},  # passed out of band: no quoting to get wrong
+            # The file is passed out of band (no quoting to get wrong); modules only from Windows' own folder.
+            env={**os.environ, "VSM_VERIFY_FILE": str(path), "PSModulePath": modules},
         )
     except (OSError, subprocess.SubprocessError) as e:
         log.warning("could not check the signature: %s", e)
-        return "Unknown", ""
-    status, _, subject = result.stdout.partition("\n")
-    return status.strip(), subject.strip()
+        return "Unknown", "", ""
+    status, subject, issuer = (result.stdout.split("\n") + ["", "", ""])[:3]
+    return status.strip(), subject.strip(), issuer.strip()
 
 
 def _hold_open(path: Path):
@@ -159,9 +164,9 @@ def verify_and_run(path: Path) -> None:
     """Check the signature and start Setup elevated, in update mode. Raises UpdateError if it must not run."""
     handle = _hold_open(path)
     try:
-        status, subject = signature(path)
-        if not is_trusted(status, subject):
-            log.warning("refusing to install %s: signature %s, signer %r", path.name, status, subject)
+        status, subject, issuer = signature(path)
+        if not is_trusted(status, subject, issuer):
+            log.warning("refusing to install %s: signature %s, signer %r, issuer %r", path.name, status, subject, issuer)
             raise UpdateError(f"the download is not signed by {PUBLISHER} (Windows reports: {status or 'no signature'})")
         shell_execute = ctypes.windll.shell32.ShellExecuteW
         shell_execute.restype = ctypes.c_void_p
