@@ -14,6 +14,7 @@ from .core.config import ConfigStore
 from .core.hub import Hub
 from .core.paths import Paths
 from .core.selfupdate import SelfUpdate
+from .core.support import Job as SupportJob
 from .core.updates import Updates
 from .game.settings import GameSettings
 from .integrations.discord_bot import Discord
@@ -76,6 +77,9 @@ class Manager:
         self.self_update = SelfUpdate(self)
         # When the desktop window's page last asked for the update to be installed (see api/routes.py).
         self.update_requested_at = 0.0
+        # (when, text) of this PC's desktop.log, handed over by the app for the diagnostics zip (core/support.py).
+        self.desktop_log: tuple[float, str] | None = None
+        self.support = SupportJob(self)
         self.profiles = Profiles(self)
         self.history = PlayerHistory(self)
         self.steam_users = SteamUsers(self)

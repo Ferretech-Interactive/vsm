@@ -262,6 +262,32 @@ class Shell:
         theme.darken_when_shown(window)
         self._about_window = window
 
+    # ---------- report a problem ----------
+
+    def report_problem(self, *_args) -> None:
+        """Help > Report a problem: show the System page's report card. On this PC's own manager,
+        first hand it this window's desktop.log, which the service cannot read from this user's
+        profile, so the diagnostics zip includes it."""
+        threading.Thread(target=self._report_flow, name="report", daemon=True).start()
+
+    def _report_flow(self) -> None:
+        if self.window is None:
+            return
+        if self.url and self._is_local_page():
+            try:
+                from ..core.support import DESKTOP_LOG_MAX, tail
+
+                token = self._token()
+                if not token:
+                    raise RuntimeError("not signed in")
+                self._api("/auth/local", {"token": token})
+                text = tail(settings.client_dir() / "logs" / "desktop.log", DESKTOP_LOG_MAX - 1000) or ""
+                self._api("/support/desktop-log", {"text": text})
+            except Exception as e:  # the zip is still useful without it
+                log.warning("could not hand over the desktop log: %s", e)
+        self.show()
+        self.window.evaluate_js("location.hash = '/system'; setTimeout(() => window.dispatchEvent(new Event('vsm-report')), 300);")
+
     # ---------- updates ----------
 
     def check_for_updates(self, *_args) -> None:
@@ -575,7 +601,7 @@ class Shell:
         from webview.menu import Menu, MenuAction
 
         menu = [Menu("Servers", [MenuAction("Manage servers...", self.open_servers), MenuAction("Deploy to a Linux server...", self.open_deploy)])]
-        help_items = [MenuAction("About Vein Server Manager", self.about)]
+        help_items = [MenuAction("Report a problem...", self.report_problem), MenuAction("About Vein Server Manager", self.about)]
         if self.can_update:
             help_items.insert(0, MenuAction("Check for updates...", self.check_for_updates))
         menu.append(Menu("Help", help_items))
@@ -607,6 +633,9 @@ class Shell:
 
         if self.can_update and self.url and settings.mode() == "service":
             threading.Thread(target=self._watch_update_requests, name="update-requests", daemon=True).start()
+        # Backups and the diagnostics zip are downloads; pywebview refuses them unless told otherwise.
+        # Each one still goes through a Save As dialog.
+        webview.settings["ALLOW_DOWNLOADS"] = True
         storage = settings.client_dir() / "webview"
         storage.mkdir(parents=True, exist_ok=True)
         try:

@@ -80,12 +80,14 @@ body:
     attributes:
       label: Logs
       description: |
-        The relevant lines only. Look in **System > Event log**, and in the data folder's
+        Easiest: attach the zip from **System > Report a problem** (or Help > Report a problem in
+        the app); passwords and tokens are already removed from it. Otherwise paste the relevant
+        lines only. Look in **System > Event log**, and in the data folder's
         `logs/manager.log` (and `logs/steamcmd.log` for install or update problems). For the
         desktop window: `%LOCALAPPDATA%\VeinServerManager\logs\desktop.log`. Linux service:
         `journalctl -u vsm`; Docker: `docker compose logs`.
 
-        Check before pasting: remove passwords, tokens, Discord webhook URLs and anything else you
+        Check before pasting or attaching: remove passwords, tokens, Discord webhook URLs and anything else you
         would not post in public. Public IP addresses and SteamIDs can be replaced too.
       render: text
   - type: textarea

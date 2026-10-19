@@ -1,5 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { Download, ExternalLink, Loader2 } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
+import { IN_DESKTOP_APP } from "../desktop";
 import { useLive } from "../live";
 import { PortCheck } from "../portcheck";
 import { Badge, Button, Card, Empty, Field, Grid, Input, PageHeader, Toggle, useConfig, useLoad, useLocked, useToast } from "../ui";
@@ -326,6 +328,125 @@ function Password({ auth, reload }: { auth: AuthState | null; reload: () => void
   );
 }
 
+const REPO = "https://github.com/Ferretech-Interactive/vsm";
+const LINK = "inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm font-medium text-zinc-100 hover:bg-zinc-700";
+
+interface BundleProgress {
+  state: "working" | "done" | "failed";
+  step: string;
+  done: number;
+  total: number;
+  error: string;
+}
+
+interface SupportInfo {
+  files: string[];
+  desktop_log: boolean;
+  version: string;
+  install: string;
+  os: string;
+}
+
+/** Report a problem: a diagnostics zip to attach, and the bug report form filled in with the basics.
+ * Nothing is sent anywhere by the manager; the person downloads the zip and attaches it themselves. */
+function Report() {
+  const { data, reload } = useLoad<SupportInfo>("/support");
+  const [anonymize, setAnonymize] = useState(true);
+  const [flash, setFlash] = useState(false);
+  const card = useRef<HTMLDivElement>(null);
+  const [progress, setProgress] = useState<BundleProgress | null>(null);
+  const busy = progress !== null;
+  const toast = useToast();
+  // Built as a job the page follows, then saved: the zip takes a few seconds (it runs the health check),
+  // and a plain link gave no sign of that, so people clicked again and got one Save dialog per click.
+  const download = async () => {
+    if (busy) return;
+    setProgress({ state: "working", step: "Starting", done: 0, total: 1, error: "" });
+    try {
+      const { id } = await api<{ id: string }>("/support/jobs", { method: "POST", body: { anonymize } });
+      for (;;) {
+        const s = await api<BundleProgress>(`/support/jobs/${id}`);
+        setProgress(s);
+        if (s.state === "failed") throw new Error(`The diagnostics could not be prepared: ${s.error}`);
+        if (s.state === "done") break;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      const r = await fetch(`/api/support/jobs/${id}/zip`);
+      if (!r.ok) throw new Error(`The diagnostics could not be downloaded (HTTP ${r.status}).`);
+      const name = /filename="([^"]+)"/.exec(r.headers.get("content-disposition") ?? "")?.[1] ?? "vsm-diagnostics.zip";
+      const url = URL.createObjectURL(await r.blob());
+      Object.assign(document.createElement("a"), { href: url, download: name }).click();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      toast.err(e);
+    } finally {
+      setProgress(null);
+    }
+  };
+  useEffect(() => {
+    // Help > Report a problem in the app: it may just have handed over its own log.
+    const onReport = () => {
+      reload();
+      card.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setFlash(true);
+      setTimeout(() => setFlash(false), 1500);
+    };
+    window.addEventListener("vsm-report", onReport);
+    return () => window.removeEventListener("vsm-report", onReport);
+  }, [reload]);
+  const issue = data
+    ? `${REPO}/issues/new?` + new URLSearchParams({ template: "bug_report.yml", version: data.version, install: data.install, os: data.os }).toString()
+    : REPO + "/issues/new/choose";
+  return (
+    <div ref={card} className={flash ? "rounded-xl ring-2 ring-sky-500/60 transition" : "transition"}>
+      <Card title="Report a problem" desc="Download a diagnostics zip, then open a bug report on GitHub and attach it. The manager sends nothing anywhere itself.">
+        <div className="space-y-4">
+          <Toggle
+            checked={anonymize}
+            onChange={setAnonymize}
+            label="Hide who and where"
+            hint="Replaces public IP addresses, SteamIDs, player names and your user name with placeholders. Passwords, tokens and Discord webhooks are always removed."
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={download} disabled={busy}>
+              {busy ? <Loader2 size={14} className="mr-1.5 inline animate-spin" /> : <Download size={14} className="mr-1.5 inline" />}
+              {busy ? "Preparing diagnostics..." : "Download diagnostics (.zip)"}
+            </Button>
+            <a href={issue} target="_blank" rel="noreferrer" className={LINK}>
+              <ExternalLink size={14} /> Open a bug report on GitHub
+            </a>
+          </div>
+          {progress && (
+            <div className="space-y-1">
+              <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  className="h-full rounded-full bg-sky-500 transition-[width] duration-300"
+                  style={{ width: `${Math.max(4, Math.round((100 * progress.done) / Math.max(1, progress.total)))}%` }}
+                />
+              </div>
+              <p className="text-xs text-zinc-400">{progress.state === "done" ? "Saving" : progress.step}...</p>
+            </div>
+          )}
+          {data && (
+            <details className="text-xs text-zinc-400">
+              <summary className="cursor-pointer select-none text-zinc-300">What the zip contains ({data.files.length} files)</summary>
+              <ul className="mt-2 grid gap-x-6 gap-y-0.5 font-mono sm:grid-cols-2">
+                {data.files.map((f) => (
+                  <li key={f}>{f}</li>
+                ))}
+              </ul>
+              <p className="mt-2">
+                Logs are the most recent part only. Never included: the password file, sign-in sessions, keys, saves and backups. Look through the files before posting them in public.
+              </p>
+              {IN_DESKTOP_APP && !data.files.includes("app/desktop.log") && <p className="mt-1">To include this PC's app log as well, use Help &gt; Report a problem in the app's menu.</p>}
+            </details>
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function System() {
   const { events } = useLive();
   // One copy for the whole page: setting a password in one card must unlock "allow other devices" in another.
@@ -335,6 +456,7 @@ export default function System() {
       <PageHeader title="System" desc="Diagnostics, profiles and manager settings." />
       <div className="space-y-4">
         <Health />
+        <Report />
         <RemoteAccess auth={auth} />
         <Profiles />
         <Password auth={auth} reload={reloadAuth} />

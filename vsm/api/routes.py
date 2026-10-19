@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import platform
 import subprocess
 import time
 
@@ -15,7 +16,7 @@ from .. import VsmError, __version__
 from .audit import auditor, changes
 from .auth import COOKIE, SESSION_TTL, same_origin
 from ..core.config import SECRET_FIELDS
-from ..core import selfupdate
+from ..core import selfupdate, support
 from ..core.network import local_ip, public_ip
 from ..server import upnp
 from ..game.settings import steam_ids
@@ -673,6 +674,85 @@ def diagnostics(m: Manager = Depends(manager)):
         "server_dir": str(m.paths.server),
         "in_container": os.path.exists("/.dockerenv"),
     }
+
+
+# ---------- report a problem ----------
+
+@router.get("/support")
+def support_info(m: Manager = Depends(manager)):
+    """What the diagnostics zip would hold, and what the bug report form can be filled in with."""
+    fresh = bool(m.desktop_log and time.time() - m.desktop_log[0] < support.DESKTOP_LOG_TTL)
+    return {
+        "files": support.contents(m, fresh),
+        "desktop_log": fresh,
+        "version": __version__,
+        "install": support.install_kind(m),
+        "os": platform.platform(),
+    }
+
+
+def _health(m: Manager):
+    """The health check for the zip; a failing one is reported in it rather than losing the zip,
+    which is most wanted exactly when something is broken."""
+    def run():
+        try:
+            return diagnostics(m)
+        except Exception as e:
+            return {"error": str(e)}
+    return run
+
+
+def _zip(name: str, data: bytes) -> Response:
+    return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/support/bundle")
+def support_bundle(anonymize: bool = True, m: Manager = Depends(manager), audit=Depends(auditor)):
+    """The zip in one request, for scripts. The page uses the job below to show progress."""
+    data = support.bundle(m, anonymize, _health(m))
+    audit("Downloaded diagnostics" + ("" if anonymize else " (not anonymized)"))
+    return _zip(support.file_name(), data)
+
+
+class BundleRequest(BaseModel):
+    anonymize: bool = True
+
+
+@router.post("/support/jobs")
+def support_job_start(body: BundleRequest, m: Manager = Depends(manager)):
+    return {"id": m.support.start(body.anonymize, _health(m))}
+
+
+@router.get("/support/jobs/{job_id}")
+def support_job_status(job_id: str, m: Manager = Depends(manager)):
+    status = m.support.status(job_id)
+    if status is None:
+        raise HTTPException(404, "No such diagnostics; prepare them again.")
+    return status
+
+
+@router.get("/support/jobs/{job_id}/zip")
+def support_job_zip(job_id: str, m: Manager = Depends(manager), audit=Depends(auditor)):
+    taken = m.support.take(job_id)
+    if taken is None:
+        raise HTTPException(404, "No such diagnostics; prepare them again.")
+    name, data, anonymized = taken
+    audit("Downloaded diagnostics" + ("" if anonymized else " (not anonymized)"))
+    return _zip(name, data)
+
+
+class DesktopLog(BaseModel):
+    text: str = Field(max_length=support.DESKTOP_LOG_MAX)
+
+
+@router.post("/support/desktop-log")
+def support_desktop_log(body: DesktopLog, request: Request, m: Manager = Depends(manager)):
+    """The app hands over this PC's desktop.log (Help > Report a problem), which the service
+    cannot read itself. Only the app's own window on this PC may do this."""
+    if not m.auth.is_local(request):
+        raise HTTPException(403)
+    m.desktop_log = (time.time(), body.text)
+    return {"ok": True}
 
 
 # ---------- live updates ----------

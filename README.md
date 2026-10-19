@@ -248,6 +248,20 @@ takes 10 minutes to 24 hours, and each check can be switched off there.
 - **Your network and the internet**: your public address, router forwarding (UPnP), and the
   outside port check described above.
 
+### Reporting a problem
+
+**System > Report a problem** (in the app also **Help > Report a problem...**) downloads a
+diagnostics zip to attach to a [bug report](https://github.com/Ferretech-Interactive/vsm/issues/new/choose),
+and opens the report form with the version, install type and operating system filled in. The
+manager sends nothing anywhere itself.
+
+The zip holds a summary, the health check, the settings, the Event log, the most recent part of
+the manager, SteamCMD, game and UE4SS logs, `Game.ini`/`Engine.ini` and the mod list. From the app's
+menu it also holds the app's own `desktop.log`. Passwords, tokens and Discord webhook URLs are
+always removed; **Hide who and where** (on by default) also replaces public IP addresses,
+SteamIDs, player names and the user name with placeholders. Never included: the password file,
+sign-in sessions, keys, saves and backups.
+
 ### Mods
 
 The **Mods** page handles every kind of Vein server mod. Mods can only be changed while the server
