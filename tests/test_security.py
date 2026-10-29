@@ -243,8 +243,15 @@ def test_upnp_refuses_xml_in_other_encodings():
 windows = pytest.mark.skipif(sys.platform != "win32", reason="Windows desktop app")
 
 
+def _app_window_libraries():
+    """The app window's libraries come with the `desktop` extra, which CI does not install."""
+    pytest.importorskip("webview")
+    pytest.importorskip("pystray")
+
+
 @windows
 def test_bridges_expose_their_public_methods_only():
+    _app_window_libraries()
     from vsm.desktop.remote.api import DeployApi
     from vsm.desktop.shell import AboutApi, ServersApi, expose_api
 
@@ -264,6 +271,7 @@ def test_bridges_expose_their_public_methods_only():
 
 @windows
 def test_only_web_links_leave_the_app():
+    _app_window_libraries()
     from vsm.desktop import shell
 
     opened = []
@@ -283,6 +291,7 @@ def test_only_web_links_leave_the_app():
 
 @windows
 def test_sign_in_scripts_check_the_page_first():
+    _app_window_libraries()
     from vsm.desktop.shell import LOGIN_JS, SIGN_IN_JS, origin_of
 
     for script in (SIGN_IN_JS, LOGIN_JS):
