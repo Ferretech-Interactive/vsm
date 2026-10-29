@@ -1,4 +1,4 @@
-__version__ = "0.1.0b1"
+__version__ = "0.1.0b2"
 
 # Verify HTTPS certificates the way the operating system does. Python otherwise only reads the
 # root certificates already present in the Windows store, and a freshly installed Windows has
