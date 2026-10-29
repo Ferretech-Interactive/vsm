@@ -78,7 +78,7 @@ if ($LASTEXITCODE) { throw "Pushing the tag failed." }
 
 # Shown on the release page in place of the file names (gh's "file#label"); downloads keep the file name.
 $labels = @("Windows installer", "Windows portable (zip)", "Linux package (wheel)", "Checksums")
-$uploads = for ($i = 0; $i -lt $assets.Count; $i++) { "$($assets[$i])#$($labels[$i])" }
+$uploads = for ($i = 0; $i -lt $assets.Count; $i++) { "$($assets[$i])#$($labels[$i]): $((Split-Path $assets[$i] -Leaf) -replace ' ', '.')" }
 $arguments = @("release", "create", $Tag) + $uploads + @("--title", "Vein Server Manager $Tag", "--generate-notes", "--verify-tag")
 if (-not $signed) {
     $arguments += @("--notes", "**This build is not code-signed.** Windows will warn about an unknown publisher (More info > Run anyway). Check the download against SHA256SUMS.txt: ``Get-FileHash '.\VSM.$version.Setup.exe'``")
