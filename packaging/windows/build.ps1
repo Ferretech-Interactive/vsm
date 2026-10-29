@@ -53,7 +53,11 @@ if ($Sign) {
     }
     if (-not $signtool) { throw "signtool.exe was not found. Install the Windows SDK signing tools." }
     if (-not $Thumbprint) {
-        $certs = @(Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -CodeSigningCert | Where-Object { $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) })
+        # Only the certificate the one-click updater accepts (vsm/desktop/updater.py PUBLISHER and ISSUER).
+        $certs = @(Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -CodeSigningCert | Where-Object {
+            $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) -and
+            $_.Subject -like "CN=FerreTech Interactive LLC,*" -and $_.Issuer -like "CN=Certum*"
+        })
         if ($certs.Count -ne 1) { throw "Found $($certs.Count) usable code-signing certificates; pass -Thumbprint to choose one." }
         $Thumbprint = $certs[0].Thumbprint
         Write-Host "Signing as: $($certs[0].Subject.Split(',')[0])"
