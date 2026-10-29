@@ -68,7 +68,8 @@ $assets = @(
     $wheel.FullName   # Linux managers update themselves from this
 )
 $sums = Join-Path $root "build\release\SHA256SUMS.txt"
-$assets | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(), (Split-Path $_ -Leaf) } | Set-Content $sums -Encoding ascii
+# Listed under the names people download: GitHub stores uploads with dots for spaces.
+$assets | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(), ((Split-Path $_ -Leaf) -replace ' ', '.') } | Set-Content $sums -Encoding ascii
 $assets += $sums
 
 git tag -a $Tag -m "Vein Server Manager $Tag"
@@ -77,7 +78,7 @@ if ($LASTEXITCODE) { throw "Pushing the tag failed." }
 
 $arguments = @("release", "create", $Tag) + $assets + @("--title", "Vein Server Manager $Tag", "--generate-notes", "--verify-tag")
 if (-not $signed) {
-    $arguments += @("--notes", "**This build is not code-signed.** Windows will warn about an unknown publisher (More info > Run anyway). Check the download against SHA256SUMS.txt: ``Get-FileHash '.\VSM $version Setup.exe'``")
+    $arguments += @("--notes", "**This build is not code-signed.** Windows will warn about an unknown publisher (More info > Run anyway). Check the download against SHA256SUMS.txt: ``Get-FileHash '.\VSM.$version.Setup.exe'``")
 }
 if ($prerelease) { $arguments += "--prerelease" }
 if ($draft) { $arguments += "--draft" }

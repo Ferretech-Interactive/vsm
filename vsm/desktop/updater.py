@@ -28,7 +28,8 @@ log = logging.getLogger("vsm.desktop")
 PUBLISHER = "FerreTech Interactive LLC"  # the code-signing certificate's common name
 ISSUER = "Certum"  # start of the common name of the authority that issues it
 DOWNLOAD_PREFIX = REPO_URL + "/releases/download/"
-SETUP_NAME = re.compile(r"^VSM [0-9A-Za-z.\-]{1,32} Setup\.exe$")
+# GitHub stores uploaded names with dots for spaces ("VSM.0.2.0.Setup.exe"); both spellings are accepted.
+SETUP_NAME = re.compile(r"^VSM[ .][0-9A-Za-z.\-]{1,32}[ .]Setup\.exe$")
 MAX_SETUP_BYTES = 400 * 1024 * 1024
 SETUP_ARGUMENTS = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /RELAUNCH=1"
 

@@ -11,8 +11,8 @@ def release(tag, prerelease=False, assets=None, draft=False, page=None):
     version = tag.lstrip("v")
     if assets is None:
         assets = [
-            {"name": f"VSM {version} Portable.zip", "browser_download_url": f"{REPO}/releases/download/{tag}/VSM.{version}.Portable.zip", "size": 10},
-            {"name": f"VSM {version} Setup.exe", "browser_download_url": f"{REPO}/releases/download/{tag}/VSM.{version}.Setup.exe", "size": 20},
+            {"name": f"VSM.{version}.Portable.zip", "browser_download_url": f"{REPO}/releases/download/{tag}/VSM.{version}.Portable.zip", "size": 10},
+            {"name": f"VSM.{version}.Setup.exe", "browser_download_url": f"{REPO}/releases/download/{tag}/VSM.{version}.Setup.exe", "size": 20},
         ]
     return {"tag_name": tag, "prerelease": prerelease, "draft": draft, "html_url": page or f"{REPO}/releases/tag/{tag}", "assets": assets}
 
@@ -20,7 +20,7 @@ def release(tag, prerelease=False, assets=None, draft=False, page=None):
 def test_picks_the_newest_stable_release_with_a_setup_file():
     releases = [release("v0.1.0"), release("v0.3.0-beta.1", prerelease=True), release("v0.2.0"), release("v0.2.1", draft=True), "junk", {}]
     stable, beta = pick_release(releases, "0.1.0b1")
-    assert stable["tag"] == "v0.2.0" and stable["name"] == "VSM 0.2.0 Setup.exe" and stable["size"] == 20
+    assert stable["tag"] == "v0.2.0" and stable["name"] == "VSM.0.2.0.Setup.exe" and stable["size"] == 20
     assert stable["url"] == f"{REPO}/releases/download/v0.2.0/VSM.0.2.0.Setup.exe"
     assert beta == {"tag": "v0.3.0-beta.1", "page": f"{REPO}/releases/tag/v0.3.0-beta.1"}  # pointed to, never installed
 
